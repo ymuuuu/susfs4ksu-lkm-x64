@@ -228,6 +228,9 @@ static bool susfs_cmd_handled(unsigned int cmd)
 	}
 }
 
+/* Set by the skip mechanism canary below; reboot_pre reads it. */
+static bool sc_canary_ok;
+
 static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 {
 	struct pt_regs *real_regs;
@@ -321,8 +324,6 @@ static bool sc_registered;
  * the recheck is the proof the veto held. */
 #define SUSFS_SC_CANARY_NATURAL 0x13579BDF
 #define SUSFS_SC_CANARY_FORCED  0x2468ACE0
-
-static bool sc_canary_ok;
 
 static noinline int susfs_sc_canary_fn(void)
 {
