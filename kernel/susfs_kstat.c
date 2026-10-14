@@ -1633,6 +1633,7 @@ static susfs_syscall_fn_t kstat_orig_nfstatat;
 static susfs_syscall_fn_t kstat_orig_fstat;
 static susfs_syscall_fn_t kstat_orig_statx;
 static susfs_syscall_fn_t kstat_orig_getdents64;
+#ifdef __aarch64__
 static susfs_syscall_fn_t kstat_orig_compat_stat64;
 static susfs_syscall_fn_t kstat_orig_compat_lstat64;
 static susfs_syscall_fn_t kstat_orig_compat_fstat64;
@@ -1643,6 +1644,7 @@ static susfs_syscall_fn_t kstat_orig_compat_fstat;
 static susfs_syscall_fn_t kstat_orig_compat_statx;
 static susfs_syscall_fn_t kstat_orig_compat_getdents64;
 static susfs_syscall_fn_t kstat_orig_compat_getdents;
+#endif
 
 #define SUSFS_KSTAT_WRAPPER(fn, slot, nrval, combat)			\
 	static __nocfi long fn(const struct pt_regs *regs)		\
