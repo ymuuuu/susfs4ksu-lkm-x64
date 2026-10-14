@@ -54,13 +54,19 @@ Rules, carried over from the project:
        were caught on the way: I changed the noopt post_handler to return int
        from stale memory, the tree's kprobe_post_handler_t is void; and the
        canary flag was used before its declaration.
-  5. susfs_kstat.c: arm64 struct stat offsets asserted at build time
-     (st_nlink at 20, x86_64 differs). Needs per-arch offsets for the fields
-     the hiding code rewrites, not a deleted assert.
+  5. DONE, susfs_kstat.c per-arch native offsets: only st_nlink differs
+     (u32 at 20 on arm64, unsigned long at 16 on x86_64), offset, width and
+     a width assert follow the arch, every other number still checked by the
+     original static_asserts. Run 38594474214: FIRST FULL x86_64 BUILD, both
+     jobs green, 2,077,904 bytes linked, artifact x86_64-susfs_guard_lkm.ko
+     uploaded.
   6. Symbol renames, `__arm64_sys_*` to `__x64_sys_*`, compat entries
      dropped for v1. CI cannot catch wrong names, they are runtime kallsyms
      lookups, B3 verifies.
-  7. Makefile: arm64-only checks gated, -fno-stack-protector for v1.
+  7. Makefile: downgraded to an evidence check. The build links with the
+     inherited -fstack-protector-strong, so forcing it off is only needed if
+     the loader chokes on the canary symbol. B3 checks nm -u on the artifact
+     first.
   8. fp_hook investigation: x86_64 kCFI has no .cfi_jt thunks.
 - B3, build and load on the emulator. Push the .ko, `ksud insmod`, read
   dmesg. Debug rule: if the emulator hangs, capture the kernel console first

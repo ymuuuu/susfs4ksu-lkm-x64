@@ -118,3 +118,13 @@ Item 4 of the plan, the ret-stub design, is in. Four CI runs:
 Remaining compile blocker for the whole module: one static assert in
 susfs_kstat.c. Everything else, including the link, is untested until it
 resolves.
+
+## Round 6, 2026-10-14: first full x86_64 build
+
+kstat native offsets made per-arch. The two uapi layouts agree everywhere this layer writes except st_nlink: asm-generic has u32 at 20, x86_64 widens to unsigned long at 16. Offset, copy width and a new width assert follow the arch, and the write now goes through the u64 local so the arm64 4-byte field is not overshot.
+
+Measured before editing: CONFIG_MITIGATION_RETHUNK not set, so the ret stub's ASM_RET is a plain ret, and CONFIG_FUNCTION_ERROR_INJECTION not set, confirming the module must ship its own stub.
+
+Run 38594474214: arm64-control success, x86_64-port success. The module compiled, linked (LD [M] 2,077,904 bytes) and uploaded as artifact x86_64-susfs_guard_lkm.ko, 853,010 byte zip. One modpost boilerplate warning line is the known DDK modpost patch behavior, goes on the B3 checklist with an nm -u check.
+
+Honest limits of this artifact: the symbol tables still carry __arm64_* names, so on the emulator the supercall init refuses the load by design. Item 6, the renames, is the gate to B3.
