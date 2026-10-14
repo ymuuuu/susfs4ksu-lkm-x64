@@ -342,6 +342,39 @@ static struct kprobe canary_kp = {
 	.post_handler = susfs_kp_noopt_post,
 };
 
+/* ---- B3 diagnostic, temporary ----
+ * The first emulator load refused: the module-text canary returned its
+ * natural value, so the skip never ran, and the only fact that follows is
+ * that its pre_handler never executed.  Two cheap measurements split the
+ * remaining causes before any deeper guess:
+ *  - readback of byte 0 at both probe targets.  0xcc means register_kprobe
+ *    really placed the int3 there, f3 (start of endbr64) means it armed
+ *    nothing and stayed silent about it.
+ *  - a second canary on kstrtoll, a cold core-text import with an int
+ *    return that is safe to call from init.  Same skip helper.  If this
+ *    one answers while the module-text one does not, placement on module
+ *    text is the broken half.  If neither answers, the skip mechanism
+ *    itself is dead on this kernel. */
+#define SUSFS_SC_CORE_CANARY_FORCED 0x13572468
+
+static int susfs_sc_core_canary_pre(struct kprobe *kp, struct pt_regs *regs)
+{
+	susfs_kp_skip_return(regs, SUSFS_SC_CORE_CANARY_FORCED);
+	return 1;
+}
+NOKPROBE_SYMBOL(susfs_sc_core_canary_pre);
+
+static struct kprobe core_canary_kp = {
+	.pre_handler = susfs_sc_core_canary_pre,
+	.post_handler = susfs_kp_noopt_post,
+};
+
+static void susfs_sc_diag_bytes(const char *what, const kprobe_opcode_t *addr)
+{
+	pr_info("susfs supercall diag: %s at %px starts %02x %02x %02x %02x\n",
+		what, addr, addr[0], addr[1], addr[2], addr[3]);
+}
+
 static int susfs_sc_canary_run(const char *when)
 {
 	int got = susfs_sc_canary_fn();
@@ -425,7 +458,30 @@ int susfs_supercall_init(void)
 		pr_warn("susfs supercall: register_kprobe(canary) failed %d\n", rc);
 		return rc;
 	}
+	susfs_sc_diag_bytes("module canary target after register",
+			    (const kprobe_opcode_t *)susfs_sc_canary_fn);
+
+	core_canary_kp.addr = (kprobe_opcode_t *)kstrtoll;
+	rc = register_kprobe(&core_canary_kp);
+	if (rc) {
+		pr_info("susfs supercall diag: register_kprobe(core canary) failed %d\n", rc);
+	} else {
+		long long out;
+		int got;
+
+		susfs_sc_diag_bytes("core canary target after register",
+				    core_canary_kp.addr);
+		got = kstrtoll("7", 10, &out);
+		pr_info("susfs supercall diag: core canary (kstrtoll) returned 0x%x\n", got);
+		susfs_sc_diag_bytes("core canary target after run",
+				    core_canary_kp.addr);
+		unregister_kprobe(&core_canary_kp);
+		susfs_kp_forget_addr(&core_canary_kp);
+	}
+
 	rc = susfs_sc_canary_run("init");
+	susfs_sc_diag_bytes("module canary target after run",
+			    (const kprobe_opcode_t *)susfs_sc_canary_fn);
 	if (rc) {
 		unregister_kprobe(&canary_kp);
 		return rc;
