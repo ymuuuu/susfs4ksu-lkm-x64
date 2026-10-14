@@ -4,23 +4,19 @@ x86_64 port of [inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lk
 
 ## Build
 
-Pushes to main run two jobs: `arm64-control` (upstream module, unchanged, catches regressions) and `x86_64-port` (this port). Both must be green. Artifacts per run: `x86_64-susfs_guard_lkm.ko` and `x86_64-susfs_sc` (bare supercall test client).
+Pushes to main run two jobs: `arm64-control` (upstream module, unchanged, catches regressions) and `x86_64-port` (this port). Both must be green. Artifacts per run: `x86_64-susfs_guard_lkm.ko`, `x86_64-susfs_sc` (bare supercall test client) and `x86_64-susfs-lkm-module` (the flashable loader module zip). Prebuilt binaries: the [releases](https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases) page.
 
-## Load
+## Install
 
-Plain `insmod` cannot work: five imports are unexported to modules on every GKI variant, arm64 included, same as upstream. Use the documented loader:
+The module zip is the intended path: KernelSU-Next manager, module section, install from storage, reboot (or `ksud module install susfs_lkm_x64.zip`). After reboot the module loads itself at boot and installs the x86_64 `susfs` CLI at `/data/adb/ksu/bin/susfs` (with `sus` and `ksu_susfs` symlinks) for manager modules that call the classic command line. Check with `ksud susfs version`, expect v2.3.0.
 
-```sh
-ksud insmod /data/local/tmp/susfs_guard_lkm.ko
-```
-
-The module hides itself from lsmod on purpose; check `/sys/module/susfs_guard_lkm` instead. Rollback is a plain reboot.
+For a manual one-shot load instead: plain `insmod` cannot work, five imports are unexported to modules on every GKI variant, arm64 included, same as upstream. Use `ksud insmod <path-to-.ko>`. The module hides itself from lsmod on purpose; check `/sys/module/susfs_guard_lkm` instead.
 
 ## State
 
-Live-tested on the emulator: `ksud susfs version` answers v2.3.0 and `ksud susfs support` answers Supported, sus_path hides paths from app uids while root and shell still see them, uname spoof, kstat/opath/open_redirect tables, no-opt probes holding. v1 scope: the AArch32 compat layer stays arm64-only.
+Live-tested on the emulator: autoload after reboot, `ksud susfs version` answers v2.3.0 and `ksud susfs support` answers Supported, sus_path hides paths from app uids while root and shell still see them, uname spoof, kstat/opath/open_redirect tables, no-opt probes holding. v1 scope: the AArch32 compat layer stays arm64-only.
 
-Userspace talks through the reboot-ABI supercall and the `/proc/susfs_*` nodes (interface reference: upstream [PROC_INTERFACES.md](https://github.com/inforcqb/susfs4ksu-lkm/blob/main/PROC_INTERFACES.md)). Manager modules that ship arm64 `susfs`/`ksu_susfs` binaries (BRENE, sidex15) need the planned x86_64 CLI bridge.
+Userspace talks through the reboot-ABI supercall and the `/proc/susfs_*` nodes (interface reference: upstream [PROC_INTERFACES.md](https://github.com/inforcqb/susfs4ksu-lkm/blob/main/PROC_INTERFACES.md)). Manager modules that ship their own arm64 `susfs`/`ksu_susfs` binaries (BRENE, sidex15) still carry a dead arm64 binary inside; the installed CLI here answers the same command surface, but those modules' installers may need their arch gate bypassed.
 
 ## Origin and license
 
