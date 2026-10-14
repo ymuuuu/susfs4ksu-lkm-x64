@@ -88,7 +88,12 @@ Rules, carried over from the project:
 - B4, function test. Supercall answers through `ksud susfs version` and
   `support`, manager shows the susfs section, a sus_path or sus_mount entry
   hides from a probe app.
-- B5, persistence and script integration in the KernelSU-Next-AVD tool.
+- B5, redefined 2026-10-14 by user decision: the KernelSU-Next-AVD tool stays
+  standalone, no susfs integration inside it. Persistence lives on this repo's
+  side, shape to be agreed (candidate: a module zip from this repo that runs
+  `ksud insmod` at boot, like upstream's own wrapper). Separate plan item: an
+  x86_64 `susfs` CLI bridge for third party manager modules that call the
+  classic command line but ship arm64 binaries. Nothing chosen or built yet.
 
 ## Risks
 
