@@ -32,7 +32,6 @@ typedef unsigned long u64;
 
 #define O_RDONLY 0
 #define O_WRONLY 1
-#define O_TRUNC 01000
 
 #define KSU_INSTALL_MAGIC1 0xDEADBEEF
 #define SUSFS_MAGIC 0xFAFAFAFA
@@ -164,26 +163,38 @@ static long proc_write(const char *node)
 	return rc;
 }
 
+static void say_dec(long v)
+{
+	char tmp[12];
+	unsigned long u;
+	int n = 0;
+
+	if (v < 0) {
+		out("-", 1);
+		u = (unsigned long)(-v);
+	} else {
+		u = (unsigned long)v;
+	}
+	if (!u)
+		tmp[n++] = '0';
+	while (u) {
+		tmp[n++] = (char)('0' + (u % 10));
+		u /= 10;
+	}
+	while (n)
+		out(&tmp[--n], 1);
+}
+
 static int fail(const char *what, long err)
 {
 	say("susfs: ");
 	say(what);
 	say(" failed");
-	if (err < 0 && err > -1000) {
+	if (err == -999)
+		say(" (no supercall answer, the module is not loaded)");
+	else if (err < 0) {
 		say(" (kernel err ");
-		/* small negative numbers only; print as decimal */
-		{
-			char tmp[8];
-			int n = 0;
-			unsigned long u = (unsigned long)(-err);
-
-			while (u) {
-				tmp[n++] = (char)('0' + (u % 10));
-				u /= 10;
-			}
-			while (n)
-				out(&tmp[--n], 1);
-		}
+		say_dec(err);
 		say(")");
 	}
 	say("\n");
@@ -277,6 +288,10 @@ int sc_main(long argc, char **argv)
 		return got < 0 ? fail("enable_avc_log_spoofing", got) : 0;
 	}
 	if (sequal(argv[1], "hide_sus_mnts_for_non_su_procs") && argc == 3) {
+		/* The kernel takes this byte as a bool and cannot reject a
+		 * garbage value, so the CLI must. */
+		if (argv[2][0] != '0' && argv[2][0] != '1')
+			goto usage;
 		sc_buf[0] = argv[2][0] - '0';
 		sc_buf[1] = 0;
 		err = supercall(CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS, 8);

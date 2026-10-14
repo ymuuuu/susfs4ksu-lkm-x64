@@ -26,8 +26,6 @@
  *           -o susfs_sc_x64 tools/susfs_sc_x64.c
  */
 
-typedef unsigned long u64;
-typedef long s64;
 
 #define SYS_write 1
 #define SYS_exit 60
@@ -93,8 +91,13 @@ static void say_hex(unsigned long v)
 	p += 2;
 	for (i = 60; i >= 0; i -= 4)
 		*p++ = d[(v >> i) & 0xf];
-	*p++ = '\n';
 	puts_len(out, p - out);
+}
+
+static void say_hex_line(unsigned long v)
+{
+	say_hex(v);
+	puts_len("\n", 1);
 }
 
 static void say_dec(long v)
@@ -226,11 +229,11 @@ long sc_main(long argc, char **argv)
 		*(int *)(payload + len - 4) = ERR_SEED;
 
 	say("susfs_sc_x64: cmd ");
-	say_hex((unsigned long)cmd);
+	say_hex_line((unsigned long)cmd);
 	rc = sys5(SYS_reboot, KSU_INSTALL_MAGIC1, SUSFS_MAGIC, cmd,
 		  (long)payload, 0);
 	say("susfs_sc_x64: reboot() returned ");
-	say_hex((unsigned long)rc);
+	say_hex_line((unsigned long)rc);
 	err = (len >= 4) ? *(int *)(payload + len - 4) : 0;
 	say("susfs_sc_x64: err=");
 	say_dec(err);
