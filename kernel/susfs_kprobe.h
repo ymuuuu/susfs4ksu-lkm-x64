@@ -136,8 +136,8 @@ asmlinkage void susfs_just_return(void);
  * ignores the ip write above, see Documentation/trace/kprobes.rst.  It
  * never runs on the skip path, the int3 dispatcher returns before post
  * handling when the pre_handler was non-zero.  Defined in susfs_main.c. */
-int susfs_kp_noopt_post(struct kprobe *p, struct pt_regs *regs,
-			unsigned long flags);
+void susfs_kp_noopt_post(struct kprobe *p, struct pt_regs *regs,
+			 unsigned long flags);
 
 /* Make the probed function return immediately with VAL, the arm64
  * pc = x30 plus x0 = val pair in one call.  x86_64 has no link register:

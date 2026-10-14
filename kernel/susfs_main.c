@@ -18,10 +18,9 @@
 
 /* See susfs_kprobe.h.  Empty on purpose: it exists only so the kprobe
  * optimizer refuses these probes, its presence is the whole point. */
-int susfs_kp_noopt_post(struct kprobe *kp, struct pt_regs *regs,
-			unsigned long flags)
+void susfs_kp_noopt_post(struct kprobe *kp, struct pt_regs *regs,
+			 unsigned long flags)
 {
-	return 0;
 }
 NOKPROBE_SYMBOL(susfs_kp_noopt_post);
 
