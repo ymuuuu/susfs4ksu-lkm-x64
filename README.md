@@ -24,7 +24,7 @@ Userspace talks through the reboot-ABI supercall and the `/proc/susfs_*` nodes (
 
 ## Docs
 
-[docs/OVERVIEW.md](docs/OVERVIEW.md) (plain language summary), [docs/ARCH.md](docs/ARCH.md) (file map), [docs/PLAN.md](docs/PLAN.md), [docs/Progress.md](docs/Progress.md), [docs/CHECKPOINT-1.md](docs/CHECKPOINT-1.md), [docs/REFs.md](docs/REFs.md).
+Kept locally with the working copy (docs/, its own git history), not on this remote: OVERVIEW (plain language), ARCH (file map), PLAN, Progress, CHECKPOINT-1, REFs.
 
 ## Origin and license
 
