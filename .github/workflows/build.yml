@@ -105,3 +105,23 @@ jobs:
         with:
           name: x86_64-susfs_sc
           path: susfs_sc_x64
+
+      - name: Package x86_64 loader module
+        run: |
+          set -e
+          clang --target=x86_64-linux-gnu -O2 -nostdlib -static-pie \
+                -fno-stack-protector -fuse-ld=lld -Wl,-e,_start \
+                -o susfs_cli_x64 tools/susfs_cli_x64.c
+          rm -rf module-stage && mkdir module-stage
+          cp module-x64/module.prop module-stage/
+          cp module-x64/post-fs-data.sh module-x64/service.sh module-stage/
+          cp kernel/susfs_guard_lkm.ko module-stage/
+          cp susfs_cli_x64 module-stage/
+          chmod 755 module-stage/post-fs-data.sh module-stage/service.sh module-stage/susfs_cli_x64
+          cd module-stage && zip -q -r ../susfs_lkm_x64.zip . && cd ..
+
+      - name: Upload x86_64 loader module
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-susfs-lkm-module
+          path: susfs_lkm_x64.zip
