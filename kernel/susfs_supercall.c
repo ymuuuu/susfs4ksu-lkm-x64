@@ -23,6 +23,7 @@
 #include <linux/syscalls.h>
 #include <linux/string.h>
 #include "susfs_abi.h"
+#include "susfs_kprobe.h"	/* susfs_sc_arg / susfs_sc_set_ret, the reboot handler reads the real regs */
 #include "susfs_log.h"
 #include "susfs.h"
 
