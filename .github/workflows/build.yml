@@ -118,7 +118,15 @@ jobs:
           cp kernel/susfs_guard_lkm.ko module-stage/
           cp susfs_cli_x64 module-stage/
           chmod 755 module-stage/post-fs-data.sh module-stage/service.sh module-stage/susfs_cli_x64
-          cd module-stage && zip -q -r ../susfs_lkm_x64.zip . && cd ..
+          python3 - <<'EOF'
+          import zipfile
+          from pathlib import Path
+          root = Path("module-stage")
+          with zipfile.ZipFile("susfs_lkm_x64.zip", "w", zipfile.ZIP_STORED) as z:
+              for p in sorted(root.rglob("*")):
+                  if p.is_file():
+                      z.write(p, p.relative_to(root).as_posix())
+          EOF
 
       - name: Upload x86_64 loader module
         uses: actions/upload-artifact@v4
