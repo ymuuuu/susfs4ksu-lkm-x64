@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: build
+
+# One KMI only: this fork exists to bring the module to the x86_64 emulator
+# image (android15-6.6). The arm64 job is the control, it builds the unmodified
+# tree the same way upstream CI does, so a green control plus a red x86_64 job
+# always means the port is the problem, never the pipeline.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-control:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:android15-6.6-20260828
+      options: --privileged
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@v4
+
+      - name: Build susfs_guard_lkm.ko (arm64 control)
+        run: |
+          set -e
+          clang --version | head -1
+          echo "KDIR=$KDIR"
+          test -n "$KDIR" && test -f "$KDIR/Makefile"
+          make -k -C "$KDIR" M="$PWD/kernel" ARCH=arm64 CC=clang LLVM=1 LLVM_IAS=1 modules -j"$(nproc)"
+          ls -la kernel/susfs_guard_lkm.ko
+
+      - name: Upload arm64 control module
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-control-susfs_guard_lkm.ko
+          path: kernel/susfs_guard_lkm.ko
+
+  x86_64-port:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:android15-6.6-20260828
+      options: --privileged
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@v4
+
+      # The image ships a prepared arm64 kdir only. The x86_64 kdir is made
+      # here from the bundled source, following the same steps the
+      # KernelSU-Next CI uses for its x86_64 kernelsu.ko builds
+      # (.github/workflows/ddk-lkm-ksu.yml in the KernelSU-Next tree):
+      # modpost is patched to tolerate symbols the module resolves at runtime,
+      # LTO is off, modules_prepare plus the selinux objects generate the
+      # headers an external module build needs.
+      - name: Prepare x86_64 kdir
+        run: |
+          set -e
+          clang --version | head -1
+          unset ARCH CROSS_COMPILE
+          export ARCH=x86_64
+          mkdir -p /opt/ddk/kdir-x64
+          KDIR=/opt/ddk/kdir-x64/android15-6.6
+          pushd /opt/ddk/src/android15-6.6
+          MODPOST=scripts/mod/modpost.c
+          sed -i -E 's/^([[:space:]]*)check_exports\(mod\);/\1\/\/ check_exports(mod);/' "$MODPOST"
+          sed -i -E 's/^([[:space:]]*)s->module = exp->module;/\1\/\/ s->module = exp->module;/' "$MODPOST"
+          sed -i 's/^static void check_exports(/static void __attribute__((unused)) check_exports(/' "$MODPOST"
+          sed -i 's/__version_ext_names\\") =\\n/__version_ext_names\\") = \\"\\"\\n/' "$MODPOST"
+          make O=$KDIR gki_defconfig
+          scripts/config --file $KDIR/.config -d LTO_CLANG -e LTO_NONE -d LTO_CLANG_THIN -d LTO_CLANG_FULL -d THINLTO
+          make O=$KDIR modules_prepare
+          make O=$KDIR security/selinux/built-in.a
+          popd
+
+      - name: Build susfs_guard_lkm.ko (x86_64)
+        run: |
+          set -e
+          unset ARCH CROSS_COMPILE
+          export ARCH=x86_64
+          KDIR=/opt/ddk/kdir-x64/android15-6.6
+          # -k keeps going so one broken file does not hide the others; the
+          # step still fails. Expected to fail until the port lands.
+          make -k -C "$KDIR" M="$PWD/kernel" ARCH=x86_64 CC=clang LLVM=1 LLVM_IAS=1 modules -j"$(nproc)"
+          ls -la kernel/susfs_guard_lkm.ko
+
+      - name: Upload x86_64 module
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-susfs_guard_lkm.ko
+          path: kernel/susfs_guard_lkm.ko
