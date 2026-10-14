@@ -131,6 +131,14 @@ static __always_inline void susfs_set_sc_arg(struct pt_regs *regs,
 asmlinkage void susfs_just_return(void);
 #endif
 
+/* Kallsyms name of a syscall entry wrapper, which is arch spelled:
+ * __arm64_sys_foo there, __x64_sys_foo here. */
+#ifdef __x86_64__
+#define SUSFS_SC_WRAPPER_NAME(name) "__x64_sys_" #name
+#else
+#define SUSFS_SC_WRAPPER_NAME(name) "__arm64_sys_" #name
+#endif
+
 /* Registered on every probe whose pre_handler can skip: a probe with a
  * post_handler is never jump-optimized, and an optimized probe silently
  * ignores the ip write above, see Documentation/trace/kprobes.rst.  It

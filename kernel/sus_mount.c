@@ -1106,7 +1106,7 @@ static bool kr_newmnt_ok;
 struct sus_mount_kretprobe_state {
     struct seq_file *m;		/* fdinfo: the seq_file being filled */
     unsigned long ubuf;		/* statx: the caller's struct statx __user * */
-    char where;			/* statx: 's' = __arm64_sys_statx, 'd' = do_statx */
+    char where;			/* statx: 's' = the statx syscall wrapper, 'd' = do_statx */
 };
 
 static atomic_t n_fdinfo_entry = ATOMIC_INIT(0);
@@ -1370,7 +1370,7 @@ static int sus_mount_statx_ret(struct kretprobe_instance *ri, struct pt_regs *re
 }
 
 static struct kretprobe kr_statx = {
-    .kp.symbol_name = "__arm64_sys_statx",
+    .kp.symbol_name = SUSFS_SC_WRAPPER_NAME(statx),
     .entry_handler = sus_mount_statx_entry_sys,
     .handler = sus_mount_statx_ret,
     .data_size = sizeof(struct sus_mount_kretprobe_state),
@@ -2535,7 +2535,7 @@ static int sus_mount_register(void)
     rc = register_kretprobe(&kr_statx);
     if (rc) {
         susfs_krp_forget_addr(&kr_statx);
-        pr_warn("sus_mount: register_kretprobe(__arm64_sys_statx) failed %d - statx keeps returning the real stx_mnt_id\n", rc);
+        pr_warn("sus_mount: register_kretprobe(statx) failed %d - statx keeps returning the real stx_mnt_id\n", rc);
     } else {
         kr_statx_ok = true;
     }

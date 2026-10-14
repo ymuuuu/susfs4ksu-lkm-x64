@@ -298,7 +298,7 @@ static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 	 *     if (ret) goto orig_flow;
 	 *     return ret;
 	 * We cannot patch reboot.c, so mirror it from the kprobe: skip the rest of
-	 * __arm64_sys_reboot and return 0 - with these magic values reboot would otherwise
+	 * the reboot syscall wrapper and return 0 - with these magic values reboot would otherwise
 	 * return -EINVAL, and the prebuilt ksu_susfs tool checks the syscall result.  The
 	 * command itself still runs from task_work before we return to userspace. */
 	susfs_kp_skip_return(regs, 0);
@@ -307,7 +307,7 @@ static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 NOKPROBE_SYMBOL(reboot_pre);
 
 static struct kprobe reboot_kp = {
-	.symbol_name = "__arm64_sys_reboot",
+	.symbol_name = SUSFS_SC_WRAPPER_NAME(reboot),
 	.pre_handler = reboot_pre,
 	.post_handler = susfs_kp_noopt_post,
 };

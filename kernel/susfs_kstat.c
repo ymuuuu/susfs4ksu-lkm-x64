@@ -1667,6 +1667,9 @@ SUSFS_KSTAT_WRAPPER(kstat_wrap_nfstatat, kstat_orig_nfstatat, __NR_newfstatat, f
 SUSFS_KSTAT_WRAPPER(kstat_wrap_fstat, kstat_orig_fstat, __NR_fstat, false)
 SUSFS_KSTAT_WRAPPER(kstat_wrap_statx, kstat_orig_statx, __NR_statx, false)
 SUSFS_KSTAT_WRAPPER(kstat_wrap_getdents64, kstat_orig_getdents64, __NR_getdents64, false)
+#ifdef __aarch64__
+/* The compat half is arm64 only for now: the x86_64 port drops the 32-bit
+ * ABI for v1, AArch32 numbers and layouts do not describe ia32. */
 SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_stat64, kstat_orig_compat_stat64, COMPAT_STAT64_NR, true)
 SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_lstat64, kstat_orig_compat_lstat64, COMPAT_LSTAT64_NR, true)
 SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_fstat64, kstat_orig_compat_fstat64, COMPAT_FSTAT64_NR, true)
@@ -1677,21 +1680,23 @@ SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_fstat, kstat_orig_compat_fstat, COMPAT_FST
 SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_statx, kstat_orig_compat_statx, COMPAT_STATX_NR, true)
 SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_getdents64, kstat_orig_compat_getdents64, SUS_NR_GETDENTS64_COMPAT, true)
 SUSFS_KSTAT_WRAPPER(kstat_wrap_compat_getdents, kstat_orig_compat_getdents, SUS_NR_GETDENTS_COMPAT, true)
+#endif
 
 static struct susfs_fp_hook kstat_hooks[] = {
 	{ .nr = __NR_newfstatat, .nr_compat = 0, .name = "kstat/newfstatat",
-	  .sym = "__arm64_sys_newfstatat",
+	  .sym = SUSFS_SC_WRAPPER_NAME(newfstatat),
 	  .wrapper = kstat_wrap_nfstatat, .orig_slot = &kstat_orig_nfstatat },
 	{ .nr = __NR_fstat, .nr_compat = 0, .name = "kstat/fstat",
-	  .sym = "__arm64_sys_fstat",
+	  .sym = SUSFS_SC_WRAPPER_NAME(fstat),
 	  .wrapper = kstat_wrap_fstat, .orig_slot = &kstat_orig_fstat },
 	{ .nr = __NR_statx, .nr_compat = 0, .name = "kstat/statx",
-	  .sym = "__arm64_sys_statx",
+	  .sym = SUSFS_SC_WRAPPER_NAME(statx),
 	  .wrapper = kstat_wrap_statx, .orig_slot = &kstat_orig_statx },
 	{ .nr = __NR_getdents64, .nr_compat = 0, .name = "kstat/getdents64",
-	  .sym = "__arm64_sys_getdents64",
+	  .sym = SUSFS_SC_WRAPPER_NAME(getdents64),
 	  .wrapper = kstat_wrap_getdents64, .orig_slot = &kstat_orig_getdents64 },
 
+#ifdef __aarch64__
 	/* The AArch32 half.  nr stays -1 for every one of them. */
 	{ .nr = -1, .nr_compat = COMPAT_STAT64_NR, .name = "kstat/compat stat64",
 	  .sym = "__arm64_compat_sys_stat64",
@@ -1723,6 +1728,7 @@ static struct susfs_fp_hook kstat_hooks[] = {
 	{ .nr = -1, .nr_compat = SUS_NR_GETDENTS_COMPAT, .name = "kstat/compat getdents",
 	  .sym = "__arm64_compat_sys_getdents",
 	  .wrapper = kstat_wrap_compat_getdents, .orig_slot_compat = &kstat_orig_compat_getdents },
+#endif
 };
 
 /* ---- path resolution + rule management (original SUSFS semantics) ---- */

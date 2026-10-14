@@ -70,7 +70,7 @@ static int kr_newuname_ret(struct kretprobe_instance *ri, struct pt_regs *regs)
 }
 
 static struct kretprobe krp = {
-    .kp.symbol_name = "__arm64_sys_newuname",
+    .kp.symbol_name = SUSFS_SC_WRAPPER_NAME(newuname),
     .entry_handler = kr_newuname_entry,
     .handler = kr_newuname_ret,
     .data_size = sizeof(struct uname_args),

@@ -41,11 +41,9 @@
 #include "patch_memory.h"
 #include "symbol_resolver.h"
 #include "susfs_log.h"
+#include "susfs_kprobe.h"	/* SUSFS_SC_WRAPPER_NAME for the log control symbol */
 #include "susfs_fp_hook.h"
 
-/* The BTI landing pad of an indirect call target: 'bti c' (an unallocated HINT
- * on cores without BTI, so checking for it is correct either way). */
-#define SUSFS_ARM64_BTI_C	0xd503245fu
 
 static susfs_syscall_fn_t *sys_call_table_ptr;
 static susfs_syscall_fn_t *compat_sys_call_table_ptr;
@@ -117,7 +115,7 @@ int susfs_fp_init(void)
 			"(control: jiffies direct=%px, openat walk=%px)\n",
 			direct, walked,
 			(void *)find_kernel_symbol_exact("jiffies"),
-			ksu_resolve_symbol_for_functable_hook("__arm64_sys_openat"));
+			ksu_resolve_symbol_for_functable_hook(SUSFS_SC_WRAPPER_NAME(openat)));
 		return -ENOENT;
 	}
 
@@ -178,7 +176,7 @@ void susfs_fp_dump_wrapper(const char *name, const void *fn)
 	}
 	pr_info("susfs_fp: %s at %px first insn 0x%08x (%s)\n", name, fn,
 		READ_ONCE(*(const u32 *)fn),
-		fp_has_landing_pad(fn) ? "bti c" : "NO LANDING PAD");
+		fp_has_landing_pad(fn) ? "landing pad" : "NO LANDING PAD");
 }
 
 /* An indirect call into us is checked against the target's BTI landing pad, so a
@@ -188,7 +186,7 @@ void susfs_fp_dump_wrapper(const char *name, const void *fn)
  * so verify them and refuse to install rather than find out the hard way. */
 static bool fp_has_landing_pad(const void *fn)
 {
-	return READ_ONCE(*(const u32 *)fn) == SUSFS_ARM64_BTI_C;
+	return READ_ONCE(*(const u32 *)fn) == SUSFS_LANDING_PAD;
 }
 
 int susfs_fp_install(struct susfs_fp_hook *h)

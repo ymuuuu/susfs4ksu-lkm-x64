@@ -91,11 +91,9 @@
  * test is written out here so opath_dump can report it on the device for a wrapper that is not
  * installed at all - a dump whose answer only exists when the hook is already live would be
  * useless for the step it is meant for. */
-#define SUSFS_ARM64_BTI_C	0xd503245fu
-
 static inline bool opath_has_landing_pad(const void *fn)
 {
-	return fn && READ_ONCE(*(const u32 *)fn) == SUSFS_ARM64_BTI_C;
+	return fn && READ_ONCE(*(const u32 *)fn) == SUSFS_LANDING_PAD;
 }
 
 /* Resolved BY NAME at init and cached, exactly like sus_open_redirect.c does it: fget_raw() is
@@ -290,7 +288,7 @@ static struct susfs_fp_hook opath_hooks[] = {
 	{
 		.nr		= __NR_openat,
 		.name		= "opath/openat",
-		.sym		= "__arm64_sys_openat",
+		.sym		= SUSFS_SC_WRAPPER_NAME(openat),
 		.wrapper	= susfs_opath_openat,
 		.orig_slot	= &opath_orig_openat,
 	},
@@ -298,23 +296,28 @@ static struct susfs_fp_hook opath_hooks[] = {
 	{
 		.nr		= __NR_openat2,
 		.name		= "opath/openat2",
-		.sym		= "__arm64_sys_openat2",
+		.sym		= SUSFS_SC_WRAPPER_NAME(openat2),
 		.wrapper	= susfs_opath_openat2,
 		.orig_slot	= &opath_orig_openat2,
 	},
+#ifdef __aarch64__
 	/* The 32-bit side of the same syscall is a separate table element - see
 	 * SUSFS_COMPAT_NR_OPENAT2 - so it gets a hook of its own rather than an nr_compat on the
 	 * one above: the two are independent elements and either can be missing on a kernel of
-	 * its own, which is exactly what per-hook install/logging is for. */
+	 * its own, which is exactly what per-hook install/logging is for.
+	 * The whole compat half is arm64 only for now: the x86_64 port drops the
+	 * 32-bit ABI for v1 (ia32 numbers and layouts differ from AArch32). */
 	{
 		.nr		= -1,
 		.nr_compat	= SUSFS_COMPAT_NR_OPENAT2,
 		.name		= "opath/compat openat2",
-		.sym		= "__arm64_sys_openat2",
+		.sym		= SUSFS_SC_WRAPPER_NAME(openat2),
 		.wrapper	= susfs_opath_compat_openat2,
 		.orig_slot_compat = &opath_orig_compat_openat2,
 	},
 #endif
+#endif /* __NR_openat2 */
+#ifdef __aarch64__
 	{
 		.nr		= -1,
 		.nr_compat	= SUSFS_COMPAT_NR_OPEN,
@@ -331,6 +334,7 @@ static struct susfs_fp_hook opath_hooks[] = {
 		.wrapper	= susfs_opath_compat_openat,
 		.orig_slot_compat = &opath_orig_compat_openat,
 	},
+#endif
 };
 
 /* Table entries are data, so this is a plain read - what it is for is telling "our wrapper is

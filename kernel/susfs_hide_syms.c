@@ -682,7 +682,12 @@ static bool m_show_registered;
  * Only when that fails is the value treated as an entry stub: skip an optional `bti c`, follow the
  * unconditional branch that must follow it (`b`; `bl` is a call and is deliberately not followed),
  * and validate the destination the same way.  Any other shape fails, and the caller falls back to
- * registering by name rather than arming an unvalidated address. */
+ * registering by name rather than arming an unvalidated address.
+ *
+ * x86_64 note: kCFI there has no jump tables, so the table value IS the
+ * function body and the stub-following path below never fires; if it ever
+ * did, it fails closed and the caller registers by name.  kprobes itself
+ * skips the endbr64 the body starts with. */
 static int __nocfi noinline hide_syms_resolve_show(struct kprobe *kp,
 		const char *table_name, const char *symbol_name,
 		const struct seq_operations **table_out)
