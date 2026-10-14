@@ -65,9 +65,9 @@ static int avc_audit_post_pre(struct kprobe *kp, struct pt_regs *regs)
 		return 0;
 	atomic_inc(&avc_hit_count);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
-	susfs_sc_arg(regs, 1) = avc_priv_app_sid;
+	susfs_set_sc_arg(regs, 1, avc_priv_app_sid);
 #else
-	susfs_sc_arg(regs, 2) = avc_priv_app_sid;
+	susfs_set_sc_arg(regs, 2, avc_priv_app_sid);
 #endif
 	return 0;
 }

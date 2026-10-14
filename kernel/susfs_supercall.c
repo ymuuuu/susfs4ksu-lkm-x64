@@ -291,7 +291,7 @@ static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 	 * return -EINVAL, and the prebuilt ksu_susfs tool checks the syscall result.  The
 	 * command itself still runs from task_work before we return to userspace. */
 	regs->pc = regs->regs[30];
-	susfs_sc_arg(regs, 0) = 0;
+	susfs_sc_set_ret(regs, 0);
 	return 1;
 }
 

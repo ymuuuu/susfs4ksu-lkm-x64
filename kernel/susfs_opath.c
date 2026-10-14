@@ -244,7 +244,7 @@ static __nocfi long susfs_opath_post(long ret)
 			return -ENOSYS;					\
 		ret = orig(regs);					\
 		atomic_inc(&n_opath_seen);				\
-		if ((flags_reg) >= 0 && !(regs->regs[flags_reg] & O_PATH))	\
+		if ((flags_reg) >= 0 && !(susfs_sc_arg(regs, flags_reg) & O_PATH))	\
 			return ret;					\
 		return susfs_opath_post(ret);				\
 	}

@@ -90,6 +90,53 @@ static __always_inline unsigned long susfs_sc_arg(const struct pt_regs *regs,
 #endif
 }
 
-#endif /* _SUSFS_KPROBE_H */
+/* Write a syscall argument in place, for the pre_handlers that rewrite one
+ * before the real function runs (avc_spoof's sid, open_redirect's path).
+ * Same index meaning as susfs_sc_arg. */
+static __always_inline void susfs_set_sc_arg(struct pt_regs *regs,
+					     unsigned int idx,
+					     unsigned long val)
+{
+#ifdef __aarch64__
+	regs->regs[idx] = val;
+#elif defined(__x86_64__)
+	switch (idx) {
+	case 0:
+		regs->di = val;
+		return;
+	case 1:
+		regs->si = val;
+		return;
+	case 2:
+		regs->dx = val;
+		return;
+	case 3:
+		regs->r10 = val;
+		return;
+	case 4:
+		regs->r8 = val;
+		return;
+	case 5:
+		regs->r9 = val;
+		return;
+	}
+#else
+#error "susfs_set_sc_arg: unsupported arch"
+#endif
+}
+
+/* Set the value a skipped syscall returns to its caller.  arm64 pre-skip
+ * code writes x0 (regs[0]); x86_64 callers read the return out of ax. */
+static __always_inline void susfs_sc_set_ret(struct pt_regs *regs,
+					     unsigned long val)
+{
+#ifdef __aarch64__
+	regs->regs[0] = val;
+#elif defined(__x86_64__)
+	regs->ax = val;
+#else
+#error "susfs_sc_set_ret: unsupported arch"
+#endif
+}
 
 #endif /* _SUSFS_KPROBE_H */

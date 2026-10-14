@@ -1502,7 +1502,7 @@ static int sus_mount_show_pre(struct kprobe *kp, struct pt_regs *regs)
      * seq_read() treats a negative return as a hard error, so a stray high
      * bit here would break the whole read; upstream's equivalent site
      * explicitly returns 0. */
-    susfs_sc_arg(regs, 0) = 0;
+    susfs_sc_set_ret(regs, 0);
     return 1;
 }
 

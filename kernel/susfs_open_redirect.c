@@ -308,7 +308,7 @@ static int or_vfs_open_pre(struct kprobe *kp, struct pt_regs *regs)
 		return 0;
 
 	/* vfs_open does file->f_path = *path; do_dentry_open path_get()s it. */
-	susfs_sc_arg(regs, 0) = (unsigned long)&e->redirected_path;
+	susfs_set_sc_arg(regs, 0, (unsigned long)&e->redirected_path);
 	return 0;
 }
 
@@ -339,7 +339,7 @@ static bool or_dpath_swap(struct pt_regs *regs)
 	if (!e)
 		return false;
 
-	susfs_sc_arg(regs, 0) = (unsigned long)&e->target_path;
+	susfs_set_sc_arg(regs, 0, (unsigned long)&e->target_path);
 	return true;
 }
 
@@ -372,7 +372,7 @@ static int or_vfs_statfs_pre(struct kprobe *kp, struct pt_regs *regs)
 		return 0;
 
 	atomic_inc(&or_rev_statfs_hits);
-	susfs_sc_arg(regs, 0) = (unsigned long)&e->target_path;
+	susfs_set_sc_arg(regs, 0, (unsigned long)&e->target_path);
 	return 0;
 }
 
