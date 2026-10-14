@@ -85,9 +85,13 @@ Rules, carried over from the project:
   Details in Progress round 8. Debug rule kept for future loads: if the
   emulator hangs, kernel console first, change nothing until it is read.
   Rollback is a plain reboot, the ramdisk is untouched.
-- B4, function test. Supercall answers through `ksud susfs version` and
-  `support`, manager shows the susfs section, a sus_path or sus_mount entry
-  hides from a probe app.
+- B4, DONE, 2026-10-14. `ksud susfs version` answers v2.3.0, `ksud susfs
+  support` answers Supported (ksud speaks the same reboot ABI natively).
+  set_uname spoofed the kernel string for every user until reboot, sus_path
+  hides a test folder from app uids (ENOENT) while shell and root still see
+  it, version/variant answered through the repo's own x86_64 client
+  (tools/susfs_sc_x64, CI artifact x86_64-susfs_sc). Manager section not
+  screenshotted, ksud answering it is the same path the manager uses.
 - B5, redefined 2026-10-14 by user decision: the KernelSU-Next-AVD tool stays
   standalone, no susfs integration inside it. Persistence lives on this repo's
   side, shape to be agreed (candidate: a module zip from this repo that runs

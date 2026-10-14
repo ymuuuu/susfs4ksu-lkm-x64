@@ -13,7 +13,8 @@ Normally susfs is compiled into a custom kernel, which only exists for arm64
 phones. The upstream project here (inforcqb's susfs4ksu-lkm) turned it into a
 loadable module instead: no custom kernel, you load it at runtime. But that
 module too was arm64 only. This repo is the port to x86_64, built for the
-Android 15 emulator image, so susfs runs next to KernelSU-Next on a plain
+Android 16 emulator image (its kernel is from the android15-6.6
+branch), so susfs runs next to KernelSU-Next on a plain
 emulator with no kernel replacement at all.
 
 ## How the port was done

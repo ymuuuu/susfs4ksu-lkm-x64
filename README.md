@@ -1,6 +1,6 @@
 # susfs4ksu-lkm-x64
 
-x86_64 port of [inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lkm): susfs as a loadable kernel module for the Android 15 x86_64 emulator image (kernel 6.6.66-android15-8), running beside KernelSU-Next LKM. No custom kernel, nothing replaces the ramdisk. Everything builds on GitHub Actions, nothing builds locally.
+x86_64 port of [inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lkm): susfs as a loadable kernel module for the Android 16 x86_64 emulator image, whose kernel comes from the android15-6.6 branch (6.6.66-android15-8), running beside KernelSU-Next LKM. No custom kernel, nothing replaces the ramdisk. Everything builds on GitHub Actions, nothing builds locally.
 
 ## Build
 
@@ -18,7 +18,7 @@ The module hides itself from lsmod on purpose; check `/sys/module/susfs_guard_lk
 
 ## State
 
-Live-tested on the emulator: supercall answers (v2.3.0, GKI variant), sus_path hides paths from app uids while root and shell still see them, uname spoof, kstat/opath/open_redirect tables, no-opt probes holding. v1 scope: the AArch32 compat layer stays arm64-only.
+Live-tested on the emulator: `ksud susfs version` answers v2.3.0 and `ksud susfs support` answers Supported, sus_path hides paths from app uids while root and shell still see them, uname spoof, kstat/opath/open_redirect tables, no-opt probes holding. v1 scope: the AArch32 compat layer stays arm64-only.
 
 Userspace talks through the reboot-ABI supercall and the `/proc/susfs_*` nodes (interface reference: upstream [PROC_INTERFACES.md](https://github.com/inforcqb/susfs4ksu-lkm/blob/main/PROC_INTERFACES.md)). Manager modules that ship arm64 `susfs`/`ksu_susfs` binaries (BRENE, sidex15) need the planned x86_64 CLI bridge.
 
