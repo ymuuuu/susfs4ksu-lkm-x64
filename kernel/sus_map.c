@@ -5,7 +5,7 @@
  * Upstream sets AS_FLAGS_SUS_MAP on the inode's address_space and makes
  * show_map_vma()/show_smap() skip the line, the smaps_rollup() loop skip the vma it
  * accumulates and pagemap_read() skip the chunk covering such a vma.  An LKM cannot add a
- * flag bit, so: a listing layer (kprobes on show_map_vma/show_smap, vma = regs->regs[1],
+ * flag bit, so: a listing layer (kprobes on show_map_vma/show_smap, vma = susfs_sc_arg(regs, 1),
  * skip the line with regs->pc = x30) plus a page-walk layer for the two listings it cannot
  * reach (smaps_rollup, pagemap).  smaps_rollup is deliberately NOT probed directly (see
  * "the sentinel") and the skip is gated like upstream's, apps only (see "the read gate").
@@ -130,7 +130,7 @@ static int sus_map_skip_vma_pre(struct kprobe *kp, struct pt_regs *regs)
     if (!sus_map_gate_ok())
         return 0;
 
-    vma = (struct vm_area_struct *)regs->regs[1];
+    vma = (struct vm_area_struct *)susfs_sc_arg(regs, 1);
     /* Defence in depth against the sentinel above: a vma is always a slab object in
      * the linear map, so anything below one page is not one - this turns a future
      * mis-registration into a lost filter, not a panic. */
@@ -369,7 +369,7 @@ static void sus_map_walk_dbg_log(const char *what, struct mm_struct *mm,
  * holds for read - so sus_map_find_vma()'s container cannot change underneath it. */
 static int sus_map_skip_walk_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-    const void *ops = (const void *)regs->regs[3];
+    const void *ops = (const void *)susfs_sc_arg(regs, 3);
     struct mm_struct *mm;
     struct vm_area_struct *vma;
     unsigned long start;
@@ -384,8 +384,8 @@ static int sus_map_skip_walk_pre(struct kprobe *kp, struct pt_regs *regs)
     if (!sus_map_gate_ok())
         return 0;
 
-    mm = (struct mm_struct *)regs->regs[0];
-    start = (unsigned long)regs->regs[1];
+    mm = (struct mm_struct *)susfs_sc_arg(regs, 0);
+    start = (unsigned long)susfs_sc_arg(regs, 1);
     if (!mm)
         return 0;
 
@@ -403,7 +403,7 @@ static int sus_map_skip_walk_pre(struct kprobe *kp, struct pt_regs *regs)
 /* walk_page_vma(vma, ops, private): same walk, vma handed over directly. */
 static int sus_map_skip_walk_vma_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-    const void *ops = (const void *)regs->regs[1];
+    const void *ops = (const void *)susfs_sc_arg(regs, 1);
 
     atomic_inc(&n_walk_seen_vma);
     if (walk_dbg)
@@ -416,7 +416,7 @@ static int sus_map_skip_walk_vma_pre(struct kprobe *kp, struct pt_regs *regs)
         return 0;
 
     return sus_map_walk_answer(kp, regs,
-                               (struct vm_area_struct *)regs->regs[0]) ? 1 : 0;
+                               (struct vm_area_struct *)susfs_sc_arg(regs, 0)) ? 1 : 0;
 }
 
 static struct kprobe kp_map_walk = {
@@ -478,8 +478,8 @@ static struct kprobe kp_gup_remote_inner = {
 
 static int sus_map_vm_access_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-    struct mm_struct *mm = (struct mm_struct *)regs->regs[0];
-    unsigned long addr = regs->regs[1];
+    struct mm_struct *mm = (struct mm_struct *)susfs_sc_arg(regs, 0);
+    unsigned long addr = susfs_sc_arg(regs, 1);
     struct vm_area_struct *vma;
     struct inode *inode;
 
@@ -528,7 +528,7 @@ static int sus_map_vm_access_pre(struct kprobe *kp, struct pt_regs *regs)
 static int sus_map_maplink_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
     /* struct path *path is an output argument, filled only at return: save it here. */
-    *(unsigned long *)ri->data = regs->regs[1];
+    *(unsigned long *)ri->data = susfs_sc_arg(regs, 1);
     return 0;
 }
 

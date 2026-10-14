@@ -3,7 +3,7 @@
  * susfs_hide_syms.c - hide ksu/susfs symbols from /proc/kallsyms (SUSFS HIDE_KSU_SUSFS_SYMBOLS feature), LKM port.
  * Upstream patches kernel/kallsyms.c s_show() to skip symbols whose name starts with ksu_/__ksu_/susfs_/ksud/...  s_show is
  * static but sits in the kallsyms_op.show seq_operations pointer, so LTO keeps an out-of-line copy and a kprobe can hang
- * on it.  A matching prefix returns early (regs->regs[0] = 0, regs->pc = x30), so the line is never printed - covering
+ * on it.  A matching prefix returns early (susfs_sc_arg(regs, 0) = 0, regs->pc = x30), so the line is never printed - covering
  * BOTH core-kernel and module symbols, since the whole body is skipped before it branches on module_name.  On by default
  * like upstream (a build-time CONFIG there, no runtime toggle).
  */
@@ -598,13 +598,13 @@ static int hide_syms_s_show_pre(struct kprobe *kp, struct pt_regs *regs)
 	 * module symbols carry their own spelling (e.g. __kstrtab_foo) with the module's name in module_name. */
 	if (name_should_hide(iter->name)) {
 		atomic_inc(&hide_hit_count);
-		regs->regs[0] = 0;              /* s_show returns 0 */
+		susfs_sc_arg(regs, 0) = 0;              /* s_show returns 0 */
 		regs->pc = regs->regs[30];      /* skip the line */
 		return 1;
 	}
 	if (iter->module_name[0] && hide_module_name_match(iter->module_name)) {
 		atomic_inc(&n_kallsyms_mod_skipped);
-		regs->regs[0] = 0;
+		susfs_sc_arg(regs, 0) = 0;
 		regs->pc = regs->regs[30];
 		return 1;
 	}

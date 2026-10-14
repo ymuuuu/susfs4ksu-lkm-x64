@@ -63,6 +63,7 @@
 				 * through <asm/syscall.h>). */
 
 #include "symbol_resolver.h"
+#include "susfs_kprobe.h"	/* susfs_sc_arg, the wrappers read the caller's args */
 #include "susfs_log.h"
 #include "susfs.h"		/* susfs_control_node_allowed(), sus_path_inode_hidden_public() */
 #include "susfs_opath.h"
@@ -213,9 +214,9 @@ static __nocfi long susfs_opath_post(long ret)
  * (arch/arm64/include/asm/syscall_wrapper.h:13-16, used for COMPAT_SYSCALL_DEFINEx at :27), so
  * the index is just the argument number counting from 0:
  *   - openat (fs/open.c:1336) and the AArch32 openat (fs/open.c:1383) are (dfd, filename,
- *     flags, mode): flags is argument 3 -> regs->regs[2];
+ *     flags, mode): flags is argument 3 -> susfs_sc_arg(regs, 2);
  *   - the AArch32 open (fs/open.c:1374) is COMPAT_SYSCALL_DEFINE3: there is no dirfd, so the
- *     arguments are (filename, flags, mode) and the flags are argument 2 -> regs->regs[1].
+ *     arguments are (filename, flags, mode) and the flags are argument 2 -> susfs_sc_arg(regs, 1).
  *     Reading regs[2] there would test the MODE, which is 0 or 0644/0755 in practice, and the
  *     layer would quietly skip every 32-bit open() it exists to catch.
  *   - openat2 (fs/open.c:1344) has a struct open_how __user * as argument 3: no flags to read,

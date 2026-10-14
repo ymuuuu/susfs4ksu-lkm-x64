@@ -58,4 +58,38 @@ static inline void susfs_krp_forget_addr(struct kretprobe *krp)
 	krp->kp.addr = NULL;
 }
 
+/* Syscall argument access.  Both supported arches dispatch syscalls through
+ * wrappers that take one pt_regs, but the argument registers differ: arm64
+ * keeps them in the regs[0..5] array (x0..x5), x86_64 uses named fields
+ * (rdi, rsi, rdx, r10, r8, r9).  idx stays a runtime value because the
+ * opath wrappers pass their flags-argument position in as a parameter. */
+static __always_inline unsigned long susfs_sc_arg(const struct pt_regs *regs,
+						  unsigned int idx)
+{
+#ifdef __aarch64__
+	return regs->regs[idx];
+#elif defined(__x86_64__)
+	switch (idx) {
+	case 0:
+		return regs->di;
+	case 1:
+		return regs->si;
+	case 2:
+		return regs->dx;
+	case 3:
+		return regs->r10;
+	case 4:
+		return regs->r8;
+	case 5:
+		return regs->r9;
+	default:
+		return 0;
+	}
+#else
+#error "susfs_sc_arg: unsupported arch"
+#endif
+}
+
+#endif /* _SUSFS_KPROBE_H */
+
 #endif /* _SUSFS_KPROBE_H */

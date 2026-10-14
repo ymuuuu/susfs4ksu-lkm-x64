@@ -289,7 +289,7 @@ static bool or_is_redirected_path(const char *target)
  * (upstream: newest hash_add_rcu first, here: slot order). */
 static int or_vfs_open_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-	const struct path *path = (const struct path *)regs->regs[0];
+	const struct path *path = (const struct path *)susfs_sc_arg(regs, 0);
 	struct inode *inode;
 	struct sus_or_entry *e;
 
@@ -308,7 +308,7 @@ static int or_vfs_open_pre(struct kprobe *kp, struct pt_regs *regs)
 		return 0;
 
 	/* vfs_open does file->f_path = *path; do_dentry_open path_get()s it. */
-	regs->regs[0] = (unsigned long)&e->redirected_path;
+	susfs_sc_arg(regs, 0) = (unsigned long)&e->redirected_path;
 	return 0;
 }
 
@@ -323,7 +323,7 @@ static int or_vfs_open_pre(struct kprobe *kp, struct pt_regs *regs)
  * rewritten out of the already-printed line - see or_maps_ret(). */
 static bool or_dpath_swap(struct pt_regs *regs)
 {
-	const struct path *path = (const struct path *)regs->regs[0];
+	const struct path *path = (const struct path *)susfs_sc_arg(regs, 0);
 	struct inode *inode;
 	struct sus_or_entry *e;
 
@@ -339,7 +339,7 @@ static bool or_dpath_swap(struct pt_regs *regs)
 	if (!e)
 		return false;
 
-	regs->regs[0] = (unsigned long)&e->target_path;
+	susfs_sc_arg(regs, 0) = (unsigned long)&e->target_path;
 	return true;
 }
 
@@ -355,7 +355,7 @@ static int or_dpath_pre(struct kprobe *kp, struct pt_regs *regs)
  * with vfs_statfs() at add time, susfs.c:851); swapping in the cached target path computes the same from the live target. */
 static int or_vfs_statfs_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-	const struct path *path = (const struct path *)regs->regs[0];
+	const struct path *path = (const struct path *)susfs_sc_arg(regs, 0);
 	struct inode *inode;
 	struct sus_or_entry *e;
 
@@ -372,7 +372,7 @@ static int or_vfs_statfs_pre(struct kprobe *kp, struct pt_regs *regs)
 		return 0;
 
 	atomic_inc(&or_rev_statfs_hits);
-	regs->regs[0] = (unsigned long)&e->target_path;
+	susfs_sc_arg(regs, 0) = (unsigned long)&e->target_path;
 	return 0;
 }
 
@@ -414,8 +414,8 @@ static int or_maps_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct or_maps_args *a = (struct or_maps_args *)ri->data;
 
-	a->m = (struct seq_file *)regs->regs[0];
-	a->vma = (struct vm_area_struct *)regs->regs[1];
+	a->m = (struct seq_file *)susfs_sc_arg(regs, 0);
+	a->vma = (struct vm_area_struct *)susfs_sc_arg(regs, 1);
 	return 0;
 }
 
@@ -526,7 +526,7 @@ static int or_fdinfo_entry(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct seq_file **slot = (struct seq_file **)ri->data;
 
-	*slot = (struct seq_file *)regs->regs[0];
+	*slot = (struct seq_file *)susfs_sc_arg(regs, 0);
 	return 0;
 }
 

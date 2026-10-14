@@ -6,7 +6,7 @@
  * &payload) and the handler writes payload.err back.  Upstream SUSFS patches
  * kernel/reboot.c SYSCALL_DEFINE4 to branch into ksu_handle_sys_reboot(); an LKM cannot
  * patch that, so we kprobe __arm64_sys_reboot and match the magics ourselves.
- *  - arm64 syscall-wrapper quirk: the kprobe sees regs->regs[0] == struct pt_regs * (the
+ *  - arm64 syscall-wrapper quirk: the kprobe sees susfs_sc_arg(regs, 0) == struct pt_regs * (the
  *    wrapper's __regs argument); the real user args are in real_regs->regs[0..3] - SukiSU's
  *    PT_REAL_REGS() / arch.h.
  *  - a pre_handler runs in interrupt context and must not copy_from_user, so the command is
@@ -228,7 +228,7 @@ static bool susfs_cmd_handled(unsigned int cmd)
 
 static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-	struct pt_regs *real_regs = (struct pt_regs *)regs->regs[0];
+	struct pt_regs *real_regs = (struct pt_regs *)susfs_sc_arg(regs, 0);
 	int magic1, magic2;
 	unsigned int cmd;
 	void __user *payload;
@@ -239,10 +239,10 @@ static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 	if (!real_regs)
 		return 0;
 
-	magic1 = (int)real_regs->regs[0];
-	magic2 = (int)real_regs->regs[1];
-	cmd = (unsigned int)real_regs->regs[2];
-	payload = (void __user *)real_regs->regs[3];
+	magic1 = (int)susfs_sc_arg(real_regs, 0);
+	magic2 = (int)susfs_sc_arg(real_regs, 1);
+	cmd = (unsigned int)susfs_sc_arg(real_regs, 2);
+	payload = (void __user *)susfs_sc_arg(real_regs, 3);
 
 	if (magic1 != KSU_INSTALL_MAGIC1)
 		return 0;
@@ -291,7 +291,7 @@ static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 	 * return -EINVAL, and the prebuilt ksu_susfs tool checks the syscall result.  The
 	 * command itself still runs from task_work before we return to userspace. */
 	regs->pc = regs->regs[30];
-	regs->regs[0] = 0;
+	susfs_sc_arg(regs, 0) = 0;
 	return 1;
 }
 

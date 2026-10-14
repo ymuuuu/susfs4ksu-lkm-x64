@@ -354,8 +354,8 @@ static int kstat_map_vma_entry(struct kretprobe_instance *ri, struct pt_regs *re
 {
 	struct kstat_map_args *a = (struct kstat_map_args *)ri->data;
 
-	a->m = (struct seq_file *)regs->regs[0];
-	a->vma = (struct vm_area_struct *)regs->regs[1];
+	a->m = (struct seq_file *)susfs_sc_arg(regs, 0);
+	a->vma = (struct vm_area_struct *)susfs_sc_arg(regs, 1);
 	return 0;
 }
 
@@ -1389,7 +1389,7 @@ static bool susfs_kstat_spoof_statx(struct kstat_call_state *st, unsigned long s
  * kstat_hooks[], and both the "which ABI" and the "which syscall" questions are answered by which
  * table entry was called rather than by a test that every syscall has to pay for.  Nothing is lost:
  * the arguments arrive from the wrapper, which copies them out of regs BEFORE calling the original
- * (a syscall's return value lands in regs->regs[0], so reading them afterwards would hand the
+ * (a syscall's return value lands in susfs_sc_arg(regs, 0), so reading them afterwards would hand the
  * spoofers the return value in place of the first argument).
  *
  * The old KNOWN BOUNDARY (ptrace) went away with the tracepoint: arch/arm64/kernel/syscall.c
@@ -1603,7 +1603,7 @@ static __nocfi void susfs_kstat_post(long nr, bool compat, const unsigned long *
  * Now only these thirteen numbers pay anything, and both classifiers went away with the tracepoint.
  *
  * Arguments are copied out of regs BEFORE the original runs: a syscall's return value is written
- * into regs->regs[0] (arch/arm64/kernel/syscall.c, and the compat entry point does the same), so
+ * into susfs_sc_arg(regs, 0) (arch/arm64/kernel/syscall.c, and the compat entry point does the same), so
  * reading them afterwards would hand the spoofers the return value in place of the first argument.
  *
  * __nocfi is mandatory on the wrapper, for the reason susfs_opath.c states at length: it is reached
