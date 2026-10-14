@@ -128,3 +128,18 @@ Measured before editing: CONFIG_MITIGATION_RETHUNK not set, so the ret stub's AS
 Run 38594474214: arm64-control success, x86_64-port success. The module compiled, linked (LD [M] 2,077,904 bytes) and uploaded as artifact x86_64-susfs_guard_lkm.ko, 853,010 byte zip. One modpost boilerplate warning line is the known DDK modpost patch behavior, goes on the B3 checklist with an nm -u check.
 
 Honest limits of this artifact: the symbol tables still carry __arm64_* names, so on the emulator the supercall init refuses the load by design. Item 6, the renames, is the gate to B3.
+
+## Round 7, 2026-10-14: checkpoint 1, item 6, green again
+
+Checkpoint 1 recorded BEFORE this round's changes: tag checkpoint-1-first-green on fc3c623, the first-green artifact saved to builds/checkpoint-1/ with its sha256 in docs/CHECKPOINT-1.md, restore instructions included. The builds/ directory is gitignored, binaries stay out of git.
+
+Item 6:
+
+- SUSFS_SC_WRAPPER_NAME in susfs_kprobe.h spells wrapper symbols per arch. All native kstat and opath table entries, the uname, reboot and statx probes, and the fp_hook log control use it.
+- The AArch32 compat half of kstat and opath, entries, wrappers and orig slots, compiles only on arm64. v1 scope decision as planned.
+- Landing pad checks accept endbr64 (0xfa1e0ff3) on x86_64 instead of bti c, one shared SUSFS_LANDING_PAD constant in susfs_fp_hook.h for both users.
+- hide_syms' stub follower needs no logic change on x86_64: no .cfi_jt thunks means the table value is the body, the path never fires, noted in place.
+
+Two catches this round: my own ifdef balance sweep found a missing #endif in opath before CI did, and CI caught the compat orig slot variables left outside the gate, unused-variable is an error on this tree. Run after the fix: both jobs green.
+
+The module is now loadable in principle. Item 7 is an evidence check at load time (nm -u on the artifact), everything else in B2 is done. B3, the first emulator load, is next.

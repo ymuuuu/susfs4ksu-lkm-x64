@@ -60,14 +60,20 @@ Rules, carried over from the project:
      original static_asserts. Run 38594474214: FIRST FULL x86_64 BUILD, both
      jobs green, 2,077,904 bytes linked, artifact x86_64-susfs_guard_lkm.ko
      uploaded.
-  6. Symbol renames, `__arm64_sys_*` to `__x64_sys_*`, compat entries
-     dropped for v1. CI cannot catch wrong names, they are runtime kallsyms
-     lookups, B3 verifies.
+  6. DONE, run 38596373807 plus the unused-variable fix, both green.
+     SUSFS_SC_WRAPPER_NAME spells wrapper symbols per arch, all native
+     tables and the uname, reboot, statx probes use it, the whole AArch32
+     compat half is compiled only on arm64, and the landing pad checks
+     accept endbr64 on x86_64. CI still cannot catch wrong names, they are
+     runtime kallsyms lookups, B3 verifies on the emulator.
   7. Makefile: downgraded to an evidence check. The build links with the
      inherited -fstack-protector-strong, so forcing it off is only needed if
      the loader chokes on the canary symbol. B3 checks nm -u on the artifact
      first.
-  8. fp_hook investigation: x86_64 kCFI has no .cfi_jt thunks.
+  8. DONE by design: x86_64 kCFI has no .cfi_jt thunks, hide_syms' stub
+     follower documents it never fires there, scan_call_to stays a NULL
+     stub with zero callers, and the landing pad question was the real
+     piece, fixed in item 6 with endbr64.
 - B3, build and load on the emulator. Push the .ko, `ksud insmod`, read
   dmesg. Debug rule: if the emulator hangs, capture the kernel console first
   with -show-kernel, change nothing until it is read. Rollback is a reboot,
