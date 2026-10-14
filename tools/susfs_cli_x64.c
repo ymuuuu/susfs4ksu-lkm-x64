@@ -57,6 +57,29 @@ typedef unsigned long u64;
 static char sc_buf[FEATURES_SIZE + 4] __attribute__((aligned(16)));
 static char line[FEATURES_SIZE];
 
+/* Freestanding: clang rewrites zeroing and copying loops into memset/memcpy
+ * calls (the CI link failed on exactly that), so both must exist here. */
+void *memset(void *dst, int c, unsigned long n)
+{
+	unsigned char *p = dst;
+	unsigned long i;
+
+	for (i = 0; i < n; i++)
+		p[i] = (unsigned char)c;
+	return dst;
+}
+
+void *memcpy(void *dst, const void *src, unsigned long n)
+{
+	unsigned char *d = dst;
+	const unsigned char *s = src;
+	unsigned long i;
+
+	for (i = 0; i < n; i++)
+		d[i] = s[i];
+	return dst;
+}
+
 static long sys5(long n, long a, long b, long c, long d, long e)
 {
 	register long rax __asm__("rax") = n;
