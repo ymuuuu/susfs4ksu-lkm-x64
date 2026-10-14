@@ -66,3 +66,4 @@ __pycache__/
 
 # local scratch: downloaded CI artifacts, device scripts and CI logs used while verifying
 dist/
+builds/
