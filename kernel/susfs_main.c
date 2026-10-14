@@ -8,12 +8,22 @@
 #include <linux/init.h>
 #include <linux/version.h>	/* LINUX_VERSION_CODE: the MODULE_IMPORT_NS spelling below */
 
+#include "susfs_kprobe.h"	/* susfs_kp_noopt_post lives here */
 #include "symbol_resolver.h"
 #include "susfs_log.h"
 #include "ksu_umount_gate.h"
 #include "lsm_hook.h"
 #include "susfs.h"
 #include "susfs_opath.h"	/* SUSFS_OPATH_NODE + the layer's init/exit */
+
+/* See susfs_kprobe.h.  Empty on purpose: it exists only so the kprobe
+ * optimizer refuses these probes, its presence is the whole point. */
+int susfs_kp_noopt_post(struct kprobe *kp, struct pt_regs *regs,
+			unsigned long flags)
+{
+	return 0;
+}
+NOKPROBE_SYMBOL(susfs_kp_noopt_post);
 
 /* The module's own name lives in susfs.h (SUSFS_LKM_MODULE_NAME / SUSFS_LKM_SYSFS_DIR):
  * /sys/module's directory and the rules that hide it (susfs_hide_syms.c) must agree, and the

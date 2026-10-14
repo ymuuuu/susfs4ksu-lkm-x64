@@ -23,7 +23,7 @@
 #include <linux/syscalls.h>
 #include <linux/string.h>
 #include "susfs_abi.h"
-#include "susfs_kprobe.h"	/* susfs_sc_arg / susfs_sc_set_ret, the reboot handler reads the real regs */
+#include "susfs_kprobe.h"	/* susfs_sc_arg reads the real regs; the skip goes through susfs_kp_skip_return */
 #include "susfs_log.h"
 #include "susfs.h"
 
@@ -291,14 +291,15 @@ static int reboot_pre(struct kprobe *kp, struct pt_regs *regs)
 	 * __arm64_sys_reboot and return 0 - with these magic values reboot would otherwise
 	 * return -EINVAL, and the prebuilt ksu_susfs tool checks the syscall result.  The
 	 * command itself still runs from task_work before we return to userspace. */
-	regs->pc = regs->regs[30];
-	susfs_sc_set_ret(regs, 0);
+	susfs_kp_skip_return(regs, 0);
 	return 1;
 }
+NOKPROBE_SYMBOL(reboot_pre);
 
 static struct kprobe reboot_kp = {
 	.symbol_name = "__arm64_sys_reboot",
 	.pre_handler = reboot_pre,
+	.post_handler = susfs_kp_noopt_post,
 };
 
 static bool sc_registered;

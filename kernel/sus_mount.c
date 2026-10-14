@@ -1497,23 +1497,25 @@ static int sus_mount_show_pre(struct kprobe *kp, struct pt_regs *regs)
         return 0;
     sus_mount_note_id(r);
     atomic_inc(&n_ident_hits);
-    regs->pc = regs->regs[30];   /* skip this mount line */
-    /* These show_* callbacks return int and x0 still holds seq_file*.
-     * seq_read() treats a negative return as a hard error, so a stray high
-     * bit here would break the whole read; upstream's equivalent site
-     * explicitly returns 0. */
-    susfs_sc_set_ret(regs, 0);
+    /* These show_* callbacks return int and the first argument register
+     * still holds seq_file*.  seq_read() treats a negative return as a hard
+     * error, so a stray high bit here would break the whole read; upstream's
+     * equivalent site explicitly returns 0. */
+    susfs_kp_skip_return(regs, 0);   /* skip this mount line */
     return 1;
 }
+NOKPROBE_SYMBOL(sus_mount_show_pre);
 
 static struct kprobe kp_vfsstat = {
     .symbol_name = "show_vfsstat",
     .pre_handler = sus_mount_show_pre,
+	.post_handler = susfs_kp_noopt_post,
 };
 
 static struct kprobe kp_mountinfo = {
     .symbol_name = "show_mountinfo",
     .pre_handler = sus_mount_show_pre,
+	.post_handler = susfs_kp_noopt_post,
 };
 
 /* /proc/mounts and /proc/<pid>/mounts go through show_vfsmnt - a DIFFERENT
@@ -1524,6 +1526,7 @@ static struct kprobe kp_mountinfo = {
 static struct kprobe kp_vfsmnt = {
     .symbol_name = "show_vfsmnt",
     .pre_handler = sus_mount_show_pre,
+	.post_handler = susfs_kp_noopt_post,
 };
 
 /* The three of them as one list, plus what is armed.  Registration and teardown both

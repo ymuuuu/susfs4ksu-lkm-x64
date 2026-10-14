@@ -192,6 +192,25 @@ void *scan_call_to(void *start, size_t size, void *target)
 #include <asm/pgtable.h>
 #include <asm/fixmap.h>
 #include <asm-generic/fixmap.h>
+#include <linux/linkage.h>
+#include <linux/objtool.h>
+#include <asm/nops.h>
+
+/* The x86_64 "make this function return" stub, same shape as the kernel's
+ * own just_return_func in arch/x86/lib/error-inject.c.  susfs_kp_skip_return
+ * points regs->ip here, the single ret consumes the caller's return address
+ * with rsp untouched, which is why this works on every kprobe backend. */
+asmlinkage void susfs_just_return(void);
+
+asm(
+    ".pushsection .text, \"ax\"\n"
+    ".type susfs_just_return, @function\n"
+    ".globl susfs_just_return\n"
+    ANNOTATE_NOENDBR
+    "susfs_just_return:\n"
+    ASM_RET
+    ".size susfs_just_return, .-susfs_just_return\n"
+    ".popsection\n");
 
 #define KSU_P4D_TO_PHYS(p4d) ((unsigned long)p4d_pfn(p4d) << PAGE_SHIFT)
 #define KSU_PUD_TO_PHYS(pud) ((unsigned long)pud_pfn(pud) << PAGE_SHIFT)

@@ -125,17 +125,37 @@ static __always_inline void susfs_set_sc_arg(struct pt_regs *regs,
 #endif
 }
 
-/* Set the value a skipped syscall returns to its caller.  arm64 pre-skip
- * code writes x0 (regs[0]); x86_64 callers read the return out of ax. */
-static __always_inline void susfs_sc_set_ret(struct pt_regs *regs,
-					     unsigned long val)
+#ifdef __x86_64__
+/* Defined in patch_memory.c, same shape as the kernel's just_return_func
+ * in arch/x86/lib/error-inject.c. */
+asmlinkage void susfs_just_return(void);
+#endif
+
+/* Registered on every probe whose pre_handler can skip: a probe with a
+ * post_handler is never jump-optimized, and an optimized probe silently
+ * ignores the ip write above, see Documentation/trace/kprobes.rst.  It
+ * never runs on the skip path, the int3 dispatcher returns before post
+ * handling when the pre_handler was non-zero.  Defined in susfs_main.c. */
+int susfs_kp_noopt_post(struct kprobe *p, struct pt_regs *regs,
+			unsigned long flags);
+
+/* Make the probed function return immediately with VAL, the arm64
+ * pc = x30 plus x0 = val pair in one call.  x86_64 has no link register:
+ * set the return value and point ip at a bare ret stub so the CPU itself
+ * pops the return address.  sp is never written: kernels whose kprobes run
+ * through ftrace restore rip but discard rsp writes, and the stub is correct
+ * on every backend either way. */
+static __always_inline void susfs_kp_skip_return(struct pt_regs *regs,
+						 unsigned long val)
 {
 #ifdef __aarch64__
 	regs->regs[0] = val;
+	regs->pc = regs->regs[30];
 #elif defined(__x86_64__)
 	regs->ax = val;
+	regs->ip = (unsigned long)&susfs_just_return;
 #else
-#error "susfs_sc_set_ret: unsupported arch"
+#error "susfs_kp_skip_return: unsupported arch"
 #endif
 }
 
