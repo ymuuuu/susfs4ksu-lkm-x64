@@ -91,3 +91,17 @@ jobs:
         with:
           name: x86_64-susfs_guard_lkm.ko
           path: kernel/susfs_guard_lkm.ko
+
+      - name: Build x86_64 supercall client
+        run: |
+          set -e
+          clang --target=x86_64-linux-gnu -O2 -nostdlib -static-pie \
+                -fno-stack-protector -fuse-ld=lld -Wl,-e,_start \
+                -o susfs_sc_x64 tools/susfs_sc_x64.c
+          file susfs_sc_x64
+
+      - name: Upload x86_64 supercall client
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-susfs_sc
+          path: susfs_sc_x64
