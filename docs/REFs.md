@@ -78,3 +78,21 @@ they are the working copy.
 - /home/ymuu/.zcode/workspace/default/ksun-dev
   KernelSU-Next dev clone used for all source claims (ksud, hook/x86_64,
   CI workflows).
+
+## pc-site design round
+
+- https://docs.kernel.org/trace/kprobes.html
+  Authoritative pre_handler execution-path change rules, the jump-optimization
+  warning, and the post_handler optimization veto.
+- https://android.googlesource.com/kernel/common/+/refs/heads/android15-6.6/arch/x86/lib/error-inject.c
+  override_function_with_return plus just_return_func, the ret-stub idiom the
+  port copies.
+- https://stackoverflow.com/questions/53457705/can-i-block-a-new-process-execution-using-kprobe
+  Practical x86 skip discussion that matched the docs.
+- https://lwn.net/Articles/375232
+  Jump optimization mechanics, why post_handler blocks it.
+- https://www.cnblogs.com/LiuYanYGZ/p/12644122.html and
+  https://cloud.tencent.com/developer/article/1874723
+  Chinese-language kprobe internals walk-throughs, register path to
+  try_to_optimize_kprobe. CN search results otherwise mirrored the same
+  English sources, no divergent local practice found.

@@ -27,12 +27,29 @@ Rules, carried over from the project:
   3. DONE, susfs_sc_arg accessor in susfs_kprobe.h, all constant-index
      argument reads rewritten. The opath wrapper's flags-argument position
      passes through as an index, so the accessor takes a runtime index.
-  4. NEXT, the 8 pc sites: `regs->pc = regs->regs[30]` is arm64's "skip the
-     rest of the function, return to caller" idiom, paired with return value
-     writes. x86_64 has no link register, this needs a redesign we agree on
-     before coding. Candidates: emulate ret in the kprobe pre_handler
-     (ip from the stack top, sp bump, ax as return value) or restructure the
-     affected hooks as kretprobes.
+  4. NEXT, the 8 pc sites, design agreed 2026-10-14 after web research, docs
+     verification and a two-round review by a second model:
+     - One helper, susfs_kp_skip_return(regs, val) in susfs_kprobe.h. arm64
+       keeps pc = x30, x0 = val. x86_64 sets ax = val and ip = a module-text
+       bare ret stub (the kernel's own idiom, arch/x86/lib/error-inject.c
+       override_function_with_return). Never touch sp: on kernels with
+       kprobes-on-ftrace the ftrace return path drops sp writes, and the stub
+       works on every path.
+     - Unconditional no-op post_handler on all eight skip probes. It is the
+       only module-side way to veto jump optimization (CONFIG_OPTPROBES=y and
+       /proc/sys/debug/kprobes-optimization=1 measured on the target), the
+       flag lands on the aggregated probe so self-checking is impossible, and
+       optimization is asynchronous, about 5 jiffies after registration, so
+       an unguarded probe works briefly then silently stops.
+     - NOKPROBE_SYMBOL on each handler: reentry past the second level ends in
+       BUG() on the int3 path.
+     - Known cost to measure in B3: the post_handler also disables boost, so
+       hot primitives like walk_page_range pay int3 plus single-step on every
+       non-matching call.
+     - Site 1 keeps the table-wrapper route as fallback and gains an init
+       canary: probe a module-local noinline function with the same skip
+       handler, verify the forced return, refuse the load otherwise, re-check
+       from delayed work.
   5. susfs_kstat.c: arm64 struct stat offsets asserted at build time
      (st_nlink at 20, x86_64 differs). Needs per-arch offsets for the fields
      the hiding code rewrites, not a deleted assert.

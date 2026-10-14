@@ -80,3 +80,19 @@ KernelSU-Next-AVD/docs/progress.md, rounds there map to rounds here.
 - 2026-10-14: one commit per step, one CI run per commit, red port job while
   porting is the worklist, not an accident.
 - 2026-10-14: the 8 pc sites get a design agreement before any code.
+
+## Round 4, 2026-10-14: pc-site design, research plus two-round model review
+
+Design inputs, all verified:
+
+- Official kprobes docs: a pre_handler may redirect execution by writing regs->ip and returning non-zero, but a jump-optimized probe ignores that, and a probe with a post_handler can never be optimized (installing one at an already optimized address un-optimizes it).
+- Kernel's own idiom for "make this function just return": arch/x86/lib/error-inject.c override_function_with_return writes ip = just_return_func, a module-style bare ret stub. It never touches sp.
+- Target kernel measured as root: CONFIG_KPROBES_ON_FTRACE not set, CONFIG_DYNAMIC_FTRACE not set (register_ftrace_function and ftrace_regs_caller absent from kallsyms), CONFIG_OPTPROBES=y, /proc/sys/debug/kprobes-optimization=1, CONFIG_X86_KERNEL_IBT=y, CONFIG_CFI_CLANG=y, just_return_func absent. All eight probes are int3 probes here, and the ftrace IPMODIFY family is impossible on this kernel.
+- Second-model review (claude-opus-5 via delegate, read-only, two rounds). Round 1 ranked a ret-stub variant first, warned that manual sp writes die on the ftrace path, and flagged NOKPROBE plus endbr64 handling. Round 2, given the measured no-ftrace facts, confirmed plain manual-pop A is mechanically correct on int3 but the ret stub stays preferred as path-independent insurance, elevated the post_handler guard from conditional to unconditional and mandatory, noted the boost cost on hot primitives, and proposed an init canary self-test for site 1.
+- Verified corrections applied to the review itself: the ftrace premise was wrong for this kernel (checked live before the counter-round), and just_return_func is absent so the module ships its own stub.
+
+Agreed design: susfs_kp_skip_return helper, ret stub, unconditional no-op post_handler on the eight skip probes, NOKPROBE_SYMBOL on the handlers, init canary for the supercall path, table-wrapper stays the site 1 fallback. Written into PLAN.md item 4. No code changed this round.
+
+## Decisions added
+
+- 2026-10-14: pc sites use the ret-stub design. kretprobes rejected for seven of eight sites, they cannot cancel execution. ftrace IPMODIFY rejected, impossible on this kernel.
