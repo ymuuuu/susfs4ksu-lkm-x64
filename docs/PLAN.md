@@ -74,10 +74,17 @@ Rules, carried over from the project:
      follower documents it never fires there, scan_call_to stays a NULL
      stub with zero callers, and the landing pad question was the real
      piece, fixed in item 6 with endbr64.
-- B3, build and load on the emulator. Push the .ko, `ksud insmod`, read
-  dmesg. Debug rule: if the emulator hangs, capture the kernel console first
-  with -show-kernel, change nothing until it is read. Rollback is a reboot,
-  the ramdisk is untouched.
+- B3, DONE, 2026-10-14. Loaded via `ksud insmod` (plain insmod can never
+  work: five imports are unexported on every GKI variant, arm64 included,
+  the README's loaders rewrite them to absolute addresses). Two bugs found
+  and fixed on the way: the vermagic mismatch is a non-issue through ksud's
+  loader, and the load-refusing canary was LLVM constant-propagating the
+  canary call away, fixed with a volatile. Live state verified: module in
+  /sys/module, /proc/susfs_* nodes up, supercall armed, kprobes at +4 past
+  endbr64 with the optimization veto holding, delayed recheck passing.
+  Details in Progress round 8. Debug rule kept for future loads: if the
+  emulator hangs, kernel console first, change nothing until it is read.
+  Rollback is a plain reboot, the ramdisk is untouched.
 - B4, function test. Supercall answers through `ksud susfs version` and
   `support`, manager shows the susfs section, a sus_path or sus_mount entry
   hides from a probe app.

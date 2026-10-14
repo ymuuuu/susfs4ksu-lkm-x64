@@ -143,3 +143,17 @@ Item 6:
 Two catches this round: my own ifdef balance sweep found a missing #endif in opath before CI did, and CI caught the compat orig slot variables left outside the gate, unused-variable is an error on this tree. Run after the fix: both jobs green.
 
 The module is now loadable in principle. Item 7 is an evidence check at load time (nm -u on the artifact), everything else in B2 is done. B3, the first emulator load, is next.
+
+## Round 8, 2026-10-14: B3, first successful load on the emulator
+
+Plain insmod refused on five imports: init_mm, native_set_fixmap, copy_to_kernel_nofault, saved_boot_config, task_work_add. All five exist in live kallsyms but are not exported to modules, and upstream's own comment says they are unexported on every supported GKI variant, arm64 included. The intended loaders are `ksud insmod` or the bundled susfs_insmod, both rewrite undefined symbols to absolute addresses. ksud v3.4.2 loaded the artifact with zero source changes, and the 6.6.127 vs 6.6.66 vermagic difference never mattered, its loader passes the ignore flags. Item 7 evidence: nm -u listed 94 imports, every one present in live kallsyms.
+
+First real load refused at our own canary: natural value returned. Two diagnostic rounds (runs 38602301764, 38603307521, both green) established:
+
+- register_kprobe on this kernel steps an endbr64 target +4 (arch_adjust_kprobe_addr, confirmed in live kallsyms) and does place the int3 on module text. Byte readback: the push rbp at fn+4 became cc. The first readback window of 4 bytes at fn+0 was blind to this, an adjusted probe hides its int3 at +4.
+- Control canary on kstrtoll, core text, same skip helper: int3 at +4, call enters at +0 past the endbr64, forced value returned. The round 10 skip design works end to end.
+- Root cause: susfs_sc_canary_fn returned a plain constant, so LLVM interprocedural constant propagation replaced the call with the constant at the call site. No call, no trap, natural value forever. The natural value now lives in a volatile. This bug was arch-independent, the arm64 control never load-tests the canary.
+
+Fix run 38604440162, both jobs green. Loaded: ksud exit 0, /sys/module/susfs_guard_lkm present, /proc/susfs_* nodes up (kstat, opath, path, open_redirect, avc_spoof, enable_log, hide_modules, hide_mounts), supercall armed (reboot ABI, v2.3.0). kprobes/list shows __x64_sys_reboot+0x4 and susfs_sc_canary_fn+0x4 [susfs_guard_lkm] with flag k only, no optimization flag: the noopt post_handler veto holds live. Delayed recheck passed silently. The module filters itself out of /proc/modules by design, lsmod stays empty even for root.
+
+Loaded artifact kept at builds/b3-load-fixed/susfs_guard_lkm.ko, sha256 14125cf51ecfbf222c3de9d345afe46092a52cb463bb68e7b39bad7e565c25b6, 2,070,712 bytes. Next: B4 function tests.
