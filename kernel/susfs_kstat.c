@@ -139,10 +139,20 @@ static void kstat_snapshot(const struct sus_kstat_entry *e,
 	s->flags = e->flags;
 }
 
-/* arm64 asm-generic struct stat offsets (native 64-bit) */
+/* struct stat offsets (native 64-bit).  arm64 uses the asm-generic layout,
+ * x86_64 its own: the two agree on every member this layer touches except
+ * st_nlink, which asm-generic packs as u32 after st_mode (20) and x86_64
+ * widens to unsigned long before it (16).  The width goes with it, so the
+ * nlink write below copies ST_NLINK_WIDTH bytes, not sizeof(v32). */
 #define ST_DEV_OFF          0
 #define ST_INO_OFF          8
+#ifdef __x86_64__
+#define ST_NLINK_OFF        16
+#define ST_NLINK_WIDTH      8
+#else
 #define ST_NLINK_OFF        20
+#define ST_NLINK_WIDTH      4
+#endif
 #define ST_SIZE_OFF         48
 #define ST_BLKSIZE_OFF      56
 #define ST_BLOCKS_OFF       64
@@ -159,6 +169,7 @@ static void kstat_snapshot(const struct sus_kstat_entry *e,
 static_assert(offsetof(struct stat, st_dev) == ST_DEV_OFF, "stat.st_dev");
 static_assert(offsetof(struct stat, st_ino) == ST_INO_OFF, "stat.st_ino");
 static_assert(offsetof(struct stat, st_nlink) == ST_NLINK_OFF, "stat.st_nlink");
+static_assert(sizeof(((struct stat *)0)->st_nlink) == ST_NLINK_WIDTH, "stat.st_nlink width");
 static_assert(offsetof(struct stat, st_size) == ST_SIZE_OFF, "stat.st_size");
 static_assert(offsetof(struct stat, st_blksize) == ST_BLKSIZE_OFF, "stat.st_blksize");
 static_assert(offsetof(struct stat, st_blocks) == ST_BLOCKS_OFF, "stat.st_blocks");
@@ -636,8 +647,8 @@ static bool susfs_kstat_spoof_statbuf(struct kstat_call_state *st, unsigned long
 		rewrote = true;
 	}
 	if (e->flags & KSTAT_SPOOF_NLINK) {
-		v32 = e->spoofed_nlink;
-		if (copy_to_user((void __user *)(statbuf + ST_NLINK_OFF), &v32, sizeof(v32))) {
+		v64 = e->spoofed_nlink;
+		if (copy_to_user((void __user *)(statbuf + ST_NLINK_OFF), &v64, ST_NLINK_WIDTH)) {
 			atomic_inc(&st->cnt->uaccess);
 			return false;
 		}
