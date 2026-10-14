@@ -371,8 +371,11 @@ static struct kprobe core_canary_kp = {
 
 static void susfs_sc_diag_bytes(const char *what, const kprobe_opcode_t *addr)
 {
-	pr_info("susfs supercall diag: %s at %px starts %02x %02x %02x %02x\n",
-		what, addr, addr[0], addr[1], addr[2], addr[3]);
+	pr_info("susfs supercall diag: %s at %px starts %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+		what, addr, addr[0], addr[1], addr[2], addr[3],
+		addr[4], addr[5], addr[6], addr[7],
+		addr[8], addr[9], addr[10], addr[11],
+		addr[12], addr[13], addr[14], addr[15]);
 }
 
 static int susfs_sc_canary_run(const char *when)
@@ -452,12 +455,20 @@ int susfs_supercall_init(void)
 
 	/* The mechanism gate comes first: without a working skip there is no
 	 * supercall, and this layer is fatal by design. */
+	susfs_sc_diag_bytes("module canary target before register",
+			    (const kprobe_opcode_t *)susfs_sc_canary_fn);
 	canary_kp.addr = (kprobe_opcode_t *)susfs_sc_canary_fn;
 	rc = register_kprobe(&canary_kp);
 	if (rc) {
 		pr_warn("susfs supercall: register_kprobe(canary) failed %d\n", rc);
 		return rc;
 	}
+	/* register_kprobe() writes the ADJUSTED address back into .addr:
+	 * on x86_64 arch_adjust_kprobe_addr steps an endbr64-prefixed
+	 * target +4, so this is the only place that shows where the probe
+	 * really sits. */
+	pr_info("susfs supercall diag: canary_kp.addr=%px fn=%px\n",
+		canary_kp.addr, (void *)susfs_sc_canary_fn);
 	susfs_sc_diag_bytes("module canary target after register",
 			    (const kprobe_opcode_t *)susfs_sc_canary_fn);
 
@@ -469,8 +480,10 @@ int susfs_supercall_init(void)
 		long long out;
 		int got;
 
+		pr_info("susfs supercall diag: core_canary_kp.addr=%px kstrtoll=%px\n",
+			core_canary_kp.addr, (void *)&kstrtoll);
 		susfs_sc_diag_bytes("core canary target after register",
-				    core_canary_kp.addr);
+				    (const kprobe_opcode_t *)kstrtoll);
 		got = kstrtoll("7", 10, &out);
 		pr_info("susfs supercall diag: core canary (kstrtoll) returned 0x%x\n", got);
 		susfs_sc_diag_bytes("core canary target after run",
