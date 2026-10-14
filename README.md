@@ -22,10 +22,6 @@ Live-tested on the emulator: `ksud susfs version` answers v2.3.0 and `ksud susfs
 
 Userspace talks through the reboot-ABI supercall and the `/proc/susfs_*` nodes (interface reference: upstream [PROC_INTERFACES.md](https://github.com/inforcqb/susfs4ksu-lkm/blob/main/PROC_INTERFACES.md)). Manager modules that ship arm64 `susfs`/`ksu_susfs` binaries (BRENE, sidex15) need the planned x86_64 CLI bridge.
 
-## Docs
-
-Kept locally with the working copy (docs/, its own git history), not on this remote: OVERVIEW (plain language), ARCH (file map), PLAN, Progress, CHECKPOINT-1, REFs.
-
 ## Origin and license
 
 Port of inforcqb/susfs4ksu-lkm, which ports simonpunk/susfs4ksu (logic and hook points), with patch_memory/lsm_hook/symbol_resolver from SukiSU-Ultra. GPL-2.0-only, see LICENSE. Research and learning only, use at your own risk.
