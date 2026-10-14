@@ -27,7 +27,7 @@ Rules, carried over from the project:
   3. DONE, susfs_sc_arg accessor in susfs_kprobe.h, all constant-index
      argument reads rewritten. The opath wrapper's flags-argument position
      passes through as an index, so the accessor takes a runtime index.
-  4. NEXT, the 8 pc sites, design agreed 2026-10-14 after web research, docs
+  4. DONE, the 8 pc sites, designed 2026-10-14 (research, docs, two-round second-model
      verification and a two-round review by a second model:
      - One helper, susfs_kp_skip_return(regs, val) in susfs_kprobe.h. arm64
        keeps pc = x30, x0 = val. x86_64 sets ax = val and ip = a module-text
@@ -46,10 +46,14 @@ Rules, carried over from the project:
      - Known cost to measure in B3: the post_handler also disables boost, so
        hot primitives like walk_page_range pay int3 plus single-step on every
        non-matching call.
-     - Site 1 keeps the table-wrapper route as fallback and gains an init
+     - Site 1 keeps the table-wrapper route as fallback and gained an init
        canary: probe a module-local noinline function with the same skip
        handler, verify the forced return, refuse the load otherwise, re-check
-       from delayed work.
+       from delayed work. A failed recheck makes reboot_pre pass through.
+     - Runs 38590607834 and 38593047573 landed it. Two of my own mistakes
+       were caught on the way: I changed the noopt post_handler to return int
+       from stale memory, the tree's kprobe_post_handler_t is void; and the
+       canary flag was used before its declaration.
   5. susfs_kstat.c: arm64 struct stat offsets asserted at build time
      (st_nlink at 20, x86_64 differs). Needs per-arch offsets for the fields
      the hiding code rewrites, not a deleted assert.

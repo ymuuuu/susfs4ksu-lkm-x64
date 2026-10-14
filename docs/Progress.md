@@ -96,3 +96,25 @@ Agreed design: susfs_kp_skip_return helper, ret stub, unconditional no-op post_h
 ## Decisions added
 
 - 2026-10-14: pc sites use the ret-stub design. kretprobes rejected for seven of eight sites, they cannot cancel execution. ftrace IPMODIFY rejected, impossible on this kernel.
+
+## Round 5, 2026-10-14: skip mechanism and canary implemented
+
+Item 4 of the plan, the ret-stub design, is in. Four CI runs:
+
+- 38589967807, both red: I rewrote the noopt post_handler to return int from
+  stale memory instead of checking the tree. kprobe_post_handler_t in
+  android15-6.6 is void, the incompatible-pointer errors said so.
+- 38590607834, control green, x86 red on only the kstat assert: the ret stub,
+  susfs_kp_skip_return, the eight site conversions, thirteen probe vetoes and
+  eight NOKPROBE_SYMBOLs all compile on both arches. susfs_sc_set_ret removed,
+  zero users after the conversion.
+- Canary first attempt, control red: reboot_pre read sc_canary_ok above the
+  canary block that defines it. Declaration moved.
+- 38593047573, control green, x86 red on exactly the kstat assert. The canary
+  is in: own noinline function probed with the same skip helper, forced return
+  verified at init, refused load on failure, one second delayed recheck for
+  late optimization, pass-through gate in reboot_pre if the recheck ever fails.
+
+Remaining compile blocker for the whole module: one static assert in
+susfs_kstat.c. Everything else, including the link, is untested until it
+resolves.
