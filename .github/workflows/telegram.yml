@@ -144,8 +144,8 @@ jobs:
           )
           parts.append(
               "<tg-button-row>"
-              '<tg-button type="url" url="%s">GitHub</tg-button>'
-              '<tg-button type="url" url="%s">Blog</tg-button>'
+              '<tg-button type="url" url="%s">\u26AB GitHub</tg-button>'
+              '<tg-button type="url" url="%s">\U0001F7E1 Blog</tg-button>'
               "</tg-button-row>" % (profile_url, BLOG)
           )
           if ASSET:
@@ -159,7 +159,8 @@ jobs:
 
           kb = [
               [{"text": "Release notes", "url": URL}, {"text": "Repository", "url": repo_url}],
-              [{"text": "GitHub", "url": profile_url}, {"text": "Blog", "url": BLOG}],
+              [{"text": "\u26AB GitHub", "url": profile_url},
+               {"text": "\U0001F7E1 Blog", "url": BLOG}],
           ]
           if ASSET:
               kb.append([{"text": "⬇ Download", "url": ASSET}])
