@@ -15,34 +15,82 @@ jobs:
         env:
           TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           TAG: ${{ github.event.release.tag_name }}
           BODY: ${{ github.event.release.body }}
           URL: ${{ github.event.release.html_url }}
         run: |
+          set -euo pipefail
+
           name="${REPO##*/}"
           hashtag="$(printf '%s' "$name" | tr -- '-.' '__')"
-          notes="$(printf '%s' "$BODY" | head -c 2500)"
-          text="$(printf '%s %s\n\n%s\n\n%s\n\n#%s' \
-            "$name" "$TAG" "$notes" "$URL" "$hashtag")"
+          repo_url="https://github.com/$REPO"
+
+          # Body text: the block between the <!--tg--> markers in the release
+          # notes. Falls back to the first paragraph when they are absent.
+          body="$(printf '%s' "$BODY" | tr -d '\r')"
+          summary="$(printf '%s\n' "$body" \
+            | awk '/<!--tg-->/{f=1;next} /<!--\/tg-->/{f=0} f')"
+          if [ -z "$(printf '%s' "$summary" | tr -d '[:space:]')" ]; then
+            summary="$(printf '%s\n' "$body" | awk 'NF{print;next} {exit}')"
+          fi
+
+          esc() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+          summary_html="$(printf '%s\n' "$summary" | esc)"
+          title_html="$(printf '%s %s' "$name" "$TAG" | esc)"
+
+          # Download points at the flashable zip when there is one, else the
+          # first asset, else the button is dropped entirely.
+          asset_url="$(gh release view "$TAG" -R "$REPO" --json assets --jq \
+            '([.assets[] | select(.name | endswith(".zip"))] + .assets)[0].url // empty' \
+            2>/dev/null || true)"
+
+          dl_button=""
+          if [ -n "$asset_url" ]; then
+            dl_button="<tg-button type=\"url\" url=\"${asset_url}\" style=\"success\">Download</tg-button>"
+          fi
+
+          html="<h2>${title_html}</h2>"
+          html="${html}<blockquote>${summary_html}</blockquote>"
+          html="${html}<p>#${hashtag}</p>"
+          html="${html}<tg-button-row>${dl_button}"
+          html="${html}<tg-button type=\"url\" url=\"${URL}\" style=\"primary\">Release notes</tg-button>"
+          html="${html}</tg-button-row>"
+          html="${html}<tg-button-row>"
+          html="${html}<tg-button type=\"url\" url=\"${repo_url}\">Repository</tg-button>"
+          html="${html}</tg-button-row>"
+
+          api="https://api.telegram.org/bot$TOKEN"
+
+          resp="$(jq -n --arg chat "$CHAT_ID" --arg html "$html" \
+            '{chat_id: $chat, rich_message: {html: $html}}' \
+            | curl -sS -X POST "$api/sendRichMessage" \
+                -H 'content-type: application/json' --data @- || true)"
+
+          if printf '%s' "$resp" | jq -e '.ok == true' >/dev/null 2>&1; then
+            echo "posted via sendRichMessage"
+            exit 0
+          fi
+
+          echo "sendRichMessage rejected, falling back to sendMessage"
+          printf '%s\n' "$resp" | jq -r '.description // "no response"'
+
+          text="$(printf '<b>%s</b>\n\n%s\n\n#%s' \
+            "$title_html" "$summary_html" "$hashtag")"
+
+          buttons="$(jq -n --arg url "$URL" --arg repo "$repo_url" \
+            --arg asset "$asset_url" \
+            '[[ ( if $asset == "" then empty
+                  else {text: "Download", url: $asset} end ),
+                {text: "Release notes", url: $url} ],
+              [ {text: "Repository", url: $repo} ]]')"
+
           jq -n --arg chat "$CHAT_ID" --arg text "$text" \
-            '{chat_id: $chat, text: $text}' \
-          | curl -sS -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
+            --argjson kb "$buttons" \
+            '{chat_id: $chat, text: $text, parse_mode: "HTML",
+              link_preview_options: {is_disabled: true},
+              reply_markup: {inline_keyboard: $kb}}' \
+          | curl -sS -X POST "$api/sendMessage" \
               -H 'content-type: application/json' --data @- \
           | jq -e '.ok'
-
-      - name: Upload release assets
-        env:
-          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          gh release download "$TAG" -R "$REPO" -D dist || exit 0
-          for f in dist/*; do
-            [ -f "$f" ] || continue
-            curl -sS -X POST "https://api.telegram.org/bot$TOKEN/sendDocument" \
-              -F chat_id="$CHAT_ID" -F document=@"$f" \
-            | jq -e '.ok'
-          done
