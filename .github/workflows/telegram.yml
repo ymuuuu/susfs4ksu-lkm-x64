@@ -21,7 +21,7 @@ jobs:
           URL: ${{ github.event.release.html_url }}
         run: |
           name="${REPO##*/}"
-          hashtag="$(printf '%s' "$name" | tr '-.' '__')"
+          hashtag="$(printf '%s' "$name" | tr -- '-.' '__')"
           notes="$(printf '%s' "$BODY" | head -c 2500)"
           text="$(printf '%s %s\n\n%s\n\n%s\n\n#%s' \
             "$name" "$TAG" "$notes" "$URL" "$hashtag")"
