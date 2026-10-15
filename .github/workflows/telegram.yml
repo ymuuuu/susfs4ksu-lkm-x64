@@ -1,0 +1,48 @@
+name: Announce release on Telegram
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to channel
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+          BODY: ${{ github.event.release.body }}
+          URL: ${{ github.event.release.html_url }}
+        run: |
+          name="${REPO##*/}"
+          hashtag="$(printf '%s' "$name" | tr '-.' '__')"
+          notes="$(printf '%s' "$BODY" | head -c 2500)"
+          text="$(printf '%s %s\n\n%s\n\n%s\n\n#%s' \
+            "$name" "$TAG" "$notes" "$URL" "$hashtag")"
+          jq -n --arg chat "$CHAT_ID" --arg text "$text" \
+            '{chat_id: $chat, text: $text}' \
+          | curl -sS -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" \
+              -H 'content-type: application/json' --data @- \
+          | jq -e '.ok'
+
+      - name: Upload release assets
+        env:
+          TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release download "$TAG" -R "$REPO" -D dist || exit 0
+          for f in dist/*; do
+            [ -f "$f" ] || continue
+            curl -sS -X POST "https://api.telegram.org/bot$TOKEN/sendDocument" \
+              -F chat_id="$CHAT_ID" -F document=@"$f" \
+            | jq -e '.ok'
+          done
