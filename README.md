@@ -2,6 +2,8 @@
 
 x86_64 port of [inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lkm): susfs as a loadable kernel module for the Android 16 x86_64 emulator image, whose kernel comes from the android15-6.6 branch (6.6.66-android15-8), running beside KernelSU-Next LKM. No custom kernel, nothing replaces the ramdisk. 
 
+Please use [KernelSU-Next-AVD](https://github.com/ymuuuu/KernelSU-Next-AVD) to root your AVD.
+
 ## Build
 
 Pushes to main run two jobs: `arm64-control` (upstream module, unchanged, catches regressions) and `x86_64-port` (this port). Both must be green. Artifacts per run: `x86_64-susfs_guard_lkm.ko`, `x86_64-susfs_sc` (bare supercall test client) and `x86_64-susfs-lkm-module` (the flashable loader module zip). Prebuilt binaries: the [releases](https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases) page.
