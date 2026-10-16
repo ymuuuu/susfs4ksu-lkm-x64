@@ -125,6 +125,37 @@ static __always_inline void susfs_set_sc_arg(struct pt_regs *regs,
 #endif
 }
 
+/* The return value of a probed function, as a kretprobe's return handler
+ * sees it.  arm64 hands it back in the same x0 that carried argument 0;
+ * x86_64 keeps it in rax, and the rethook trampoline restores rax from the
+ * frame it just showed the handler (arch/x86/kernel/rethook.c: SAVE_REGS,
+ * callback, RESTORE_REGS), so a write here becomes the caller's value.
+ * d_path's reverse face reads and rewrites the returned pointer through
+ * this pair.  Argument registers at return time belong to the callee, which
+ * is why the entry handlers snapshot the arguments instead. */
+static __always_inline unsigned long susfs_kp_get_ret(const struct pt_regs *regs)
+{
+#ifdef __aarch64__
+	return regs->regs[0];
+#elif defined(__x86_64__)
+	return regs->ax;
+#else
+#error "susfs_kp_get_ret: unsupported arch"
+#endif
+}
+
+static __always_inline void susfs_kp_set_ret(struct pt_regs *regs,
+					     unsigned long val)
+{
+#ifdef __aarch64__
+	regs->regs[0] = val;
+#elif defined(__x86_64__)
+	regs->ax = val;
+#else
+#error "susfs_kp_set_ret: unsupported arch"
+#endif
+}
+
 #ifdef __x86_64__
 /* Defined in patch_memory.c, same shape as the kernel's just_return_func
  * in arch/x86/lib/error-inject.c. */

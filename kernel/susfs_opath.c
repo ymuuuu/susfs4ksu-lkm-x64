@@ -43,10 +43,12 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/version.h>	/* LINUX_VERSION_CODE: close_fd_get_file() changed prototype in 6.1 */
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/fs.h>		/* struct file, FMODE_PATH */
 #include <linux/file.h>		/* fput() */
+#include <linux/fdtable.h>	/* files_struct/fdtable for atomic fd rollback */
 #include <linux/dcache.h>	/* d_inode() */
 #include <linux/atomic.h>
 #include <linux/cred.h>		/* current_uid(), for the control node */
@@ -68,6 +70,7 @@
 #include "susfs.h"		/* susfs_control_node_allowed(), sus_path_inode_hidden_public() */
 #include "susfs_opath.h"
 #include "susfs_fp_hook.h"
+#include "susfs_or_entry.h"	/* open_redirect's name layer shares exactly these five entries */
 
 /* The AArch32 numbers.  No arm64 header defines them as __NR_*: they are what
  * arch/arm64/include/asm/unistd32.h is generated from, i.e.
@@ -96,20 +99,129 @@ static inline bool opath_has_landing_pad(const void *fn)
 	return fn && READ_ONCE(*(const u32 *)fn) == SUSFS_LANDING_PAD;
 }
 
-/* Resolved BY NAME at init and cached, exactly like sus_open_redirect.c does it: fget_raw() is
- * an EXPORT_SYMBOL (fs/file.c:927-931) but GKI's module symbol list is not a promise, and
- * close_fd_get_file() (fs/file.c:795-805) is not exported at all - it is a global function,
- * so kallsyms has it and the module's own resolver can name it.  Both are called through these
- * pointers, so every function that calls them carries __nocfi.
- * susfs_opath_init() installs no table entry while either is unresolved: a wrapper that cannot
- * finish its post-check would deny nothing and only add a fault path, so the layer stays off
- * instead (the counters and the log say which name was missing). */
+/* Resolved by name at init and cached, exactly like sus_open_redirect.c does it.  fget_raw() is
+ * exported, but GKI's module symbol list is not a promise; the close-fd helpers are global
+ * symbols whose names are found by the module's resolver.  Their signatures differ by kernel
+ * generation, so each is called through its matching pointer and every caller carries __nocfi.
+ * susfs_opath_init() installs no table entry while either required capability is unresolved: a
+ * wrapper that cannot finish its post-check would deny nothing and only add a fault path. */
 static struct file *(*opath_fget_raw)(unsigned int fd);
+/* THREE shapes, not one function under three names - and the first two share a NAME, which is
+ * exactly what a by-name resolver cannot see:
+ *
+ *   5.10..5.15  int close_fd_get_file(unsigned int fd, struct file **res)
+ *               takes the fd out of the table and then get_file()s the file, so the caller owns
+ *               TWO references and the kernel-doc there asks for filp_close() and then an fput();
+ *   6.1..6.6    struct file *close_fd_get_file(unsigned int fd)
+ *               same name, different prototype, NO reference of its own.  Called through the
+ *               older prototype above the returned pointer was read as an int status -
+ *               non-zero, therefore "failed" - while the fd was already out of the caller's
+ *               table: the deny path then handed the caller its own dead descriptor number back
+ *               (open appears to succeed, the next fstat is EBADF) and never released the file
+ *               it had just been handed;
+ *   6.12..      struct file *file_close_fd(unsigned int fd)
+ *               renamed, and "Doesn't take a separate reference count."
+ *
+ * So the PROTOTYPE is chosen at build time, from the kernel this variant is compiled for (the
+ * one place the difference is visible), and the name is resolved into it at run time.  What that
+ * does NOT cover, and the comment used to claim it did: a kernel whose helper kept the NAME but
+ * took the OTHER prototype - a vendor backport of the 6.1 shape onto a 5.x baseline, or the
+ * reverse.  Resolving by name cannot see that, and the two directions fail differently: the first
+ * does a second fput() on a reference it owns (refcount underflow), the second calls the newer
+ * helper through the older prototype, which then writes its out-parameter through the register
+ * that was never set.  Every stock tree checked (mainline 5.11..5.15, v5.15.y, GKI 5.10/5.15) has
+ * the older shape, which is why the build-time choice is right there; a vendor tree that moved
+ * pick_file() back would have to be looked at, not trusted.
+ *
+ * The reference count is a run-time fact in turn: opath_close_fd_extra_ref records whether the
+ * helper that answered owes the caller a second fput(). */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+static struct file *(*opath_close_fd)(unsigned int fd);
+#else
 static int (*opath_close_fd_get_file)(unsigned int fd, struct file **res);
-/* Which of the two names the kernel above answered to (see susfs_opath_init): only the log
- * needs it, and a log that prints a pointer without the name it came from cannot tell
- * close_fd_get_file from file_close_fd on a kernel where one of them is missing. */
+#endif
+/* Set when the resolved helper took a reference of its own (the pre-6.1 close_fd_get_file()):
+ * the deny path then owes the file two fput()s, and one of them would leak it for good. */
+static bool opath_close_fd_extra_ref;
+/* Which name the kernel above answered to (see susfs_opath_init): only the log needs it, and a log
+ * that prints a pointer without the name it came from cannot tell close_fd_get_file from
+ * file_close_fd on a kernel where one of them is missing. */
 static const char *opath_close_fd_name = "close_fd_get_file";
+
+static bool opath_close_fd_resolved(void)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	return opath_close_fd != NULL;
+#else
+	return opath_close_fd_get_file != NULL;
+#endif
+}
+
+static void *opath_close_fd_pointer(void)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	return (void *)opath_close_fd;
+#else
+	return (void *)opath_close_fd_get_file;
+#endif
+}
+
+/* Take the fd out of the table under whichever name this kernel has.  NULL means it was not
+ * ours to take; a non-NULL file is owned by the caller, which must release it - once, or twice
+ * when opath_close_fd_extra_ref is set. */
+static __nocfi struct file *opath_take_fd(unsigned int fd)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	if (opath_close_fd)
+		return opath_close_fd(fd);
+#else
+	/* Declared inside this arm on purpose: the 6.1+ helper returns the file itself, so the
+	 * out-parameter this one is called with does not exist on those kernels and a variable for
+	 * it there is -Wunused-variable under the build's -Werror. */
+	struct file *f = NULL;
+
+	if (opath_close_fd_get_file && !opath_close_fd_get_file(fd, &f))
+		return f;
+#endif
+	return NULL;
+}
+
+/* Return a raced descriptor only while holding the fd-table lock.  fd_install() cannot be used
+ * here: another CLONE_FILES thread may fill the slot after opath_take_fd() releases the kernel's
+ * lock, and fd_install() BUG_ON()s when the slot is no longer empty.  A failed restore leaves the
+ * slot owner untouched; the caller drops the references it took and keeps the original answer. */
+static bool opath_restore_fd(unsigned int fd, struct file *file)
+{
+	struct files_struct *files = current->files;
+	struct fdtable *fdt;
+	unsigned int word;
+	bool restored = false;
+
+	spin_lock(&files->file_lock);
+	fdt = files_fdtable(files);
+	/* An open bit set with an empty slot means another thread has reserved this number and is
+	 * between alloc_fd() and its lockless fd_install().  Do not race that publisher. */
+	if (fd < fdt->max_fds && !test_bit(fd, fdt->open_fds) &&
+	    !rcu_access_pointer(fdt->fd[fd])) {
+		rcu_assign_pointer(fdt->fd[fd], file);
+		__set_bit(fd, fdt->open_fds);
+		word = fd / BITS_PER_LONG;
+		if (!~fdt->open_fds[word])
+			__set_bit(word, fdt->full_fds_bits);
+		if (fd < files->next_fd)
+			files->next_fd = fd;
+		restored = true;
+	}
+	spin_unlock(&files->file_lock);
+	return restored;
+}
+
+static void opath_drop_taken(struct file *file)
+{
+	fput(file);
+	if (opath_close_fd_extra_ref)
+		fput(file);
+}
 
 /* What the layer did, not what it is configured to do: a wrapper that never runs and one that
  * runs and matches nothing look identical from the outside, and only these separate them. */
@@ -129,13 +241,15 @@ module_param_named(opath_dump, opath_dump, int, 0644);
  * lock around it, and that is deliberate - see the note in susfs_opath_exit(). */
 static bool opath_exiting;
 
-/* The post-check every wrapper funnels into.
+/* The post-check every wrapper funnels into - and, since open_redirect's name layer returns an fd of
+ * its own from inside those wrappers, the entry point it calls too.  Whatever produced the answer,
+ * an O_PATH fd that names a sus_path-hidden file is taken away the same way.
  *
  * Context: the syscall of the task that opened the file, i.e. ordinary process context - not a
  * tracepoint's atomic section.  That is what makes the layer possible at all: close_fd_get_file()
  * takes files->file_lock and sus_path_inode_hidden_public() takes sus_path_lock, and neither may
  * be taken from the contexts the kprobe layers have to live with. */
-static __nocfi long susfs_opath_post(long ret)
+__nocfi long susfs_opath_post_fd(long ret)
 {
 	struct file *f, *victim;
 	bool hidden;
@@ -164,31 +278,60 @@ static __nocfi long susfs_opath_post(long ret)
 
 	hidden = sus_path_inode_hidden_public(d_inode(f->f_path.dentry));
 
-	/* Release before deciding: the deny path takes an fd-table lock, and holding a file
-	 * reference across it buys nothing (the file is in this task's table and cannot go
-	 * away while its own syscall is running). */
-	fput(f);
-
-	if (!hidden)
+	if (!hidden) {
+		fput(f);
 		return ret;
+	}
 	atomic_inc(&n_opath_hidden);
 
-	/* Take the descriptor away and report the failure the LSM layers would have reported:
-	 * returning -ENOENT while leaving a usable O_PATH fd behind would be a worse leak than
-	 * the one being closed.  A failure here means the fd is not ours any more, which cannot
-	 * happen inside this syscall - so the original answer is kept rather than promised away,
-	 * and the counter says it happened. */
-	if (opath_close_fd_get_file((unsigned int)ret, &victim)) {
+	/* The descriptor is taken BY NUMBER while this task's fget_raw() reference on f is still held,
+	 * and the result is compared against it.  files_struct is shared (CLONE_FILES), so another
+	 * thread of this task can close this very number and open something else over it between the
+	 * check above and the take below: taking by number alone would then remove - and fput - a file
+	 * this layer never inspected, while answering -ENOENT for an open that matched nothing.
+	 * Holding f across the take costs one reference for a few instructions and turns that race into
+	 * a comparison. */
+	victim = opath_take_fd((unsigned int)ret);
+	if (!victim) {
+		/* The number is gone: nothing was taken, so the kernel's own answer stands. */
+		fput(f);
 		atomic_inc(&n_opath_err);
 		return ret;
 	}
 
-	/* fput() and not filp_close(): close_fd_get_file()'s comment asks for filp_close()
+	if (victim != f) {
+		/* The number changed hands.  What came out is not the hidden file, so it is not ours to
+		 * remove.  Restore it only if the slot is still empty; otherwise leave the other thread's
+		 * descriptor untouched and drop the references returned by the take.  Closing it instead
+		 * would take away a descriptor this layer was never asked about, and answering -ENOENT would
+		 * deny an open that matched nothing. */
+		if (!opath_restore_fd((unsigned int)ret, victim))
+			opath_drop_taken(victim);
+		else if (opath_close_fd_extra_ref)
+			fput(victim);
+		fput(f);
+		atomic_inc(&n_opath_err);
+		return ret;
+	}
+
+	/* Same file: this is the hidden one, so the descriptor goes away - and the reference
+	 * bookkeeping has to match the helper this kernel has.
+	 *
+	 * fput() and not filp_close(): the close-fd helper's normal contract asks for filp_close()
 	 * first, and for an O_PATH file that reduces to exactly this call - do_dentry_open()
 	 * set f_op = &empty_fops, so f_op->flush is NULL, and a file that was never opened for
 	 * reading can hold neither a POSIX lock nor a dnotify mark, which are the other two
-	 * things filp_close() would run before fput(). */
+	 * things filp_close() would run before fput().
+	 *
+	 * Three references pass through here on a pre-6.1 kernel and two on 6.1+: fget_raw()'s, the
+	 * one the take handed over, and - before 6.1 - the one close_fd_get_file() added itself
+	 * (fs/file.c: get_file() after the fd is out of the table).  Releasing only one of them (as
+	 * this did) leaked a struct file on every deny, which is visible as nr_files and filp slab
+	 * objects that never come back down; on 6.1+ a third fput() would be a refcount underflow. */
+	fput(f);
 	fput(victim);
+	if (opath_close_fd_extra_ref)
+		fput(victim);
 
 	atomic_inc(&n_opath_deny);
 	return -ENOENT;
@@ -200,7 +343,7 @@ static __nocfi long susfs_opath_post(long ret)
  * convention - a wrapper that read the native slot on behalf of a 32-bit task would hand it a
  * native syscall, i.e. a different syscall with a different argument layout.  Each wrapper
  * reads only its own slot.
- * __nocfi is mandatory on both the wrapper and susfs_opath_post(): the wrapper is reached
+ * __nocfi is mandatory on both the wrapper and susfs_opath_post_fd(): the wrapper is reached
  * through an indirect call out of the kernel's table, and it calls the original and the two
  * resolved kernel functions the same way.
  * The NULL test on the slot is not about the publish order - susfs_fp_install() publishes the
@@ -229,22 +372,40 @@ static __nocfi long susfs_opath_post(long ret)
  * ARM overrides in arch/arm64/include/uapi/asm/fcntl.h:23-26 exist BECAUSE of the 32-bit ABI and
  * leave O_PATH alone), and the 32-bit flags reach build_open_how() untranslated
  * (fs/open.c:1374-1377), so one constant is right for both sides.
- * n_opath_seen is bumped here rather than in susfs_opath_post() so that a skipped ordinary open
- * still shows up as "a wrapper ran" - that counter is what tells a device bring-up apart
- * "the entry is not reached at all" from "the entry is reached and the O_PATH test says no". */
-#define SUSFS_OPATH_WRAPPER(fn, slot, flags_reg)			\
+ * n_opath_seen is bumped before anything else in the wrapper, so that a skipped ordinary open - and
+ * an open that open_redirect's name layer took over - still shows up as "a wrapper ran".  That
+ * counter is what tells a device bring-up apart "the entry is not reached at all" from "the entry is
+ * reached and the O_PATH test says no". */
+#define SUSFS_OPATH_WRAPPER(fn, slot, flags_reg, kind)			\
 	static __nocfi long fn(const struct pt_regs *regs)		\
 	{								\
 		susfs_syscall_fn_t orig = READ_ONCE(slot);		\
+		susfs_or_entry_fn_t or_hook = READ_ONCE(susfs_or_entry_hook);	\
 		long ret;						\
 									\
 		if (!orig)						\
 			return -ENOSYS;					\
-		ret = orig(regs);					\
 		atomic_inc(&n_opath_seen);				\
+		/* open_redirect's name layer is asked first, and gets the same five entries: a	\
+		 * syscall entry can have only one wrapper, so it registers a hook instead of	\
+		 * installing its own.  When it redirects, the original syscall is not called at	\
+		 * all - it opens the target itself and returns the fd, and that fd goes through	\
+		 * susfs_opath_post_fd() right here, so an O_PATH answer is judged the same way	\
+		 * whichever of the two produced it (and a negative errno passes straight through	\
+		 * that function, which leaves anything that is not an fd alone). */		\
+		if (or_hook) {						\
+			ret = or_hook(regs, (kind));			\
+			if (ret != SUSFS_OR_ENTRY_PASS) {		\
+				if ((flags_reg) >= 0 && ret >= 0 &&	\
+				    !(susfs_sc_arg(regs, flags_reg) & O_PATH))	\
+					return ret;			\
+				return susfs_opath_post_fd(ret);	\
+			}						\
+		}							\
+		ret = orig(regs);					\
 		if ((flags_reg) >= 0 && !(susfs_sc_arg(regs, flags_reg) & O_PATH))	\
 			return ret;					\
-		return susfs_opath_post(ret);				\
+		return susfs_opath_post_fd(ret);			\
 	}
 
 static susfs_syscall_fn_t opath_orig_openat;
@@ -253,11 +414,11 @@ static susfs_syscall_fn_t opath_orig_compat_open;
 static susfs_syscall_fn_t opath_orig_compat_openat;
 static susfs_syscall_fn_t opath_orig_compat_openat2;
 
-SUSFS_OPATH_WRAPPER(susfs_opath_openat, opath_orig_openat, 2)
-SUSFS_OPATH_WRAPPER(susfs_opath_openat2, opath_orig_openat2, -1)
-SUSFS_OPATH_WRAPPER(susfs_opath_compat_open, opath_orig_compat_open, 1)
-SUSFS_OPATH_WRAPPER(susfs_opath_compat_openat, opath_orig_compat_openat, 2)
-SUSFS_OPATH_WRAPPER(susfs_opath_compat_openat2, opath_orig_compat_openat2, -1)
+SUSFS_OPATH_WRAPPER(susfs_opath_openat, opath_orig_openat, 2, SUSFS_OR_ENTRY_OPENAT)
+SUSFS_OPATH_WRAPPER(susfs_opath_openat2, opath_orig_openat2, -1, SUSFS_OR_ENTRY_OPENAT2)
+SUSFS_OPATH_WRAPPER(susfs_opath_compat_open, opath_orig_compat_open, 1, SUSFS_OR_ENTRY_COMPAT_OPEN)
+SUSFS_OPATH_WRAPPER(susfs_opath_compat_openat, opath_orig_compat_openat, 2, SUSFS_OR_ENTRY_COMPAT_OPENAT)
+SUSFS_OPATH_WRAPPER(susfs_opath_compat_openat2, opath_orig_compat_openat2, -1, SUSFS_OR_ENTRY_COMPAT_OPENAT2)
 
 /* The five entries.  nr < 0 means "no native entry": arm64 has no native open at all, and for
  * the AArch32 open(5) the native number 5 is setxattr (include/uapi/asm-generic/unistd.h:47) -
@@ -336,6 +497,26 @@ static struct susfs_fp_hook opath_hooks[] = {
 	},
 #endif
 };
+
+/* Whether the entries open_redirect's name layer needs actually carry this layer's wrapper.  "The
+ * layer is armed" has to mean those entries and not "the module came up": opath_dump=1 installs
+ * nothing at all, and opath_test=N installs at most the one entry it selects, while both report
+ * success.  The first two entries are the native openat/openat2, which is what every 64-bit caller
+ * goes through (every tree this module supports has __NR_openat2); a device carrying only the compat
+ * entries is not a configuration the name layer can work on.  Installed is written by
+ * susfs_fp_install()/susfs_fp_remove() under the same lock the layer arms under, and read here
+ * without it, hence the READ_ONCE. */
+bool susfs_opath_armed(void)
+{
+	/* The index is only used where the array really holds that entry: __NR_openat2 exists in every
+	 * tree this module supports, and the guard keeps a tree without it from asking about the compat
+	 * entry by mistake. */
+#ifdef __NR_openat2
+	return READ_ONCE(opath_hooks[0].installed) && READ_ONCE(opath_hooks[1].installed);
+#else
+	return READ_ONCE(opath_hooks[0].installed);
+#endif
+}
 
 /* Table entries are data, so this is a plain read - what it is for is telling "our wrapper is
  * in there" from "the kernel's own stub is in there", which the address alone cannot answer on
@@ -447,24 +628,31 @@ int susfs_opath_init(void)
 
 	opath_fget_raw = (void *)find_kernel_symbol_exact("fget_raw");
 
-	/* One function, two names: 6.11 reworked the fd-table internals, so what 5.15 calls
-	 * close_fd_get_file() (fs/file.c:795-805) is file_close_fd() from 6.12 on
-	 * (fs/file.c:784-791) - the same "take the fd out of the table, hand the caller the file,
-	 * it fputs it" contract, with the locking still inside.  This is not a cosmetic rename for
-	 * us: the CI's by-name step measures close_fd_get_file as 1 on 5.10/5.15/6.1/6.6 and 0 on
-	 * 6.12/6.18, and that 0 is this layer refusing to install on those kernels. */
-	opath_close_fd_get_file = (void *)find_kernel_symbol_exact("close_fd_get_file");
+	/* Which close-fd helper this kernel has, under WHICH prototype.  close_fd_get_file() kept its
+	 * name across 6.1 and changed its signature there, so the prototype comes from the kernel
+	 * this variant is built for (see the note on the pointers above) and the name is resolved
+	 * into it.  file_close_fd() exists only where the old name does not, so it is tried after
+	 * it; resolving by name - rather than assuming a version's name set - is what still covers
+	 * a vendor backport of either helper. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+	opath_close_fd = (void *)find_kernel_symbol_exact("close_fd_get_file");
 	opath_close_fd_name = "close_fd_get_file";
-	if (!opath_close_fd_get_file) {
-		opath_close_fd_get_file = (void *)find_kernel_symbol_exact("file_close_fd");
+	if (!opath_close_fd) {
+		opath_close_fd = (void *)find_kernel_symbol_exact("file_close_fd");
 		opath_close_fd_name = "file_close_fd";
 	}
+#else
+	opath_close_fd_get_file = (void *)find_kernel_symbol_exact("close_fd_get_file");
+	opath_close_fd_name = "close_fd_get_file";
+	/* Its result owns two references: the fd table's, and the one get_file() added. */
+	opath_close_fd_extra_ref = true;
+#endif
 
-	if (!opath_fget_raw || !opath_close_fd_get_file) {
-		/* Refusing to install beats installing a wrapper that cannot finish: without
-		 * these two the post-check could not take a descriptor away, so the layer
-		 * would only have added a fault path to every open on the system.  Both names
-		 * are printed, because "the name is missing" is only useful with which one. */
+	if (!opath_fget_raw || !opath_close_fd_resolved()) {
+		/* Refusing to install beats installing a wrapper that cannot finish: without these the
+		 * post-check could not take a descriptor away, so the layer would only have added a fault
+		 * path to every open on the system.  Every name is printed, because "the name is missing"
+		 * is only useful with which one. */
 		pr_warn("opath: fget_raw=%px close_fd_get_file=%px file_close_fd=%px - a name was not resolved, no table entry is installed and O_PATH stays visible\n",
 			(void *)opath_fget_raw,
 			(void *)find_kernel_symbol_exact("close_fd_get_file"),
@@ -526,6 +714,7 @@ int susfs_opath_init(void)
 		pr_warn("opath: %d of %d selected table entries installed - O_PATH is answered only for those (the log above names the rest)\n",
 			armed, attempted);
 
+
 	if (susfs_control_node_allowed()) {
 		opath_proc_entry = proc_create("susfs_opath", 0777, NULL, &opath_proc_ops);
 		if (!opath_proc_entry)
@@ -535,10 +724,10 @@ int susfs_opath_init(void)
 			(int)susfs_expose_proc, (int)sus_path_lsm_active());
 	}
 
-	SUSFS_LOGI("opath armed: %d/%d entries, proc=%d, fget_raw=%px %s=%px\n",
+	SUSFS_LOGI("opath armed: %d/%d entries, proc=%d, fget_raw=%px %s=%px extra_ref=%d\n",
 		armed, attempted, opath_proc_entry != NULL,
 		(void *)opath_fget_raw, opath_close_fd_name,
-		(void *)opath_close_fd_get_file);
+		opath_close_fd_pointer(), (int)opath_close_fd_extra_ref);
 	return 0;
 }
 
@@ -562,6 +751,10 @@ void susfs_opath_exit(void)
 	if (opath_exiting)
 		return;
 	opath_exiting = true;
+
+	/* Before the entries come out: the name layer must stop being reachable from them at the same
+	 * moment, and susfs_or_entry_exit() (called from open_redirect's exit, which runs first because
+	 * the layer table is torn down in reverse) has already cleared its hook pointer. */
 
 	for (i = 0; i < (int)ARRAY_SIZE(opath_hooks); i++)
 		susfs_fp_remove(&opath_hooks[i]);
