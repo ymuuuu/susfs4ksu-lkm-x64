@@ -10,8 +10,8 @@ umask 077
 exec >>"$MODDIR/load.log" 2>&1
 if [ ! -e /proc/susfs_path ]; then
   echo "service: susfs absent, retrying load"
-  /data/adb/ksud insmod "$MODDIR/susfs_guard_lkm.ko" \
-    && echo "service: loaded" || echo "service: load failed rc=$?"
+  sh "$MODDIR/post-fs-data.sh"
+  [ -e /proc/susfs_path ] && echo "service: loaded" || echo "service: load still failing, see the loader output above"
 fi
 BIN_DIR=/data/adb/ksu/bin
 mkdir -p "$BIN_DIR"
