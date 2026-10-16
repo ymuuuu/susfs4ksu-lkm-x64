@@ -18,6 +18,9 @@ For a manual one-shot load instead: plain `insmod` cannot work, five imports are
 
 Live-tested on the emulator: autoload after reboot, `ksud susfs version` answers v2.3.0 and `ksud susfs support` answers Supported, sus_path hides paths from app uids while root and shell still see them, uname spoof, kstat/opath/open_redirect tables, no-opt probes holding. v1 scope: the AArch32 compat layer stays arm64-only.
 
+
+![image.png](image.png)
+
 Userspace talks through the reboot-ABI supercall and the `/proc/susfs_*` nodes (interface reference: upstream [PROC_INTERFACES.md](https://github.com/inforcqb/susfs4ksu-lkm/blob/main/PROC_INTERFACES.md)). 
 
 
