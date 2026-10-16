@@ -44,6 +44,14 @@
 #include "susfs_kprobe.h"	/* SUSFS_SC_WRAPPER_NAME for the log control symbol */
 #include "susfs_fp_hook.h"
 
+/* The generated x86_64 unistd headers of the 5.10 KMIs do not define
+ * __NR_syscalls (android13-5.15 and up do); they carry __NR_syscall_max
+ * instead, the same fallback kernel/hook/x86_64/syscall_hook.c builds on.
+ * arm64 always defines __NR_syscalls, so the guard never fires there. */
+#ifndef __NR_syscalls
+#define __NR_syscalls (__NR_syscall_max + 1)
+#endif
+
 /* The BTI landing pad of an indirect call target: 'bti c' (an unallocated HINT
  * on cores without BTI, so checking for it is correct either way). */
 #define SUSFS_ARM64_BTI_C	0xd503245fu
