@@ -233,6 +233,10 @@ void *scan_call_to(void *start, size_t size, void *target)
 #include <linux/stop_machine.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
+/* The walk helpers below (pgd_offset .. pte_offset_kernel) live in the
+ * generic pgtable.h, which x86's asm/pgtable.h does not include (on 6.6
+ * it only arrives transitively, via linux/page_table_check.h). */
+#include <linux/pgtable.h>
 #include <asm/fixmap.h>
 #include <asm-generic/fixmap.h>
 #include <linux/linkage.h>

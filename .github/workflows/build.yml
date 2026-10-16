@@ -1,10 +1,13 @@
 # SPDX-License-Identifier: GPL-2.0-only
 name: build
 
-# One KMI only: this fork exists to bring the module to the x86_64 emulator
-# image (android15-6.6). The arm64 job is the control, it builds the unmodified
-# tree the same way upstream CI does, so a green control plus a red x86_64 job
-# always means the port is the problem, never the pipeline.
+# android15-6.6 stays the target (the x86_64 emulator image), its x86_64-port
+# job also builds the release module zip. The arm64 job is the control, it
+# builds the unmodified tree the same way upstream CI does, so a green control
+# plus a red x86_64 job always means the port is the problem, never the
+# pipeline. The x86_64-matrix job compile-proves the module on every other KMI
+# the KernelSU-Next CI builds (PR 1626), added after its android13-5.15 x64
+# job caught a missing include there.
 on:
   push:
     branches: [main]
@@ -133,3 +136,63 @@ jobs:
         with:
           name: x86_64-susfs-lkm-module
           path: susfs_lkm_x64.zip
+
+  # Compile proof on the remaining KMIs of the KernelSU-Next susfs matrix.
+  # android15-6.6 is covered by the x86_64-port job above. fail-fast is off so
+  # one red KMI leaves the others' results visible.
+  x86_64-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kmi:
+          - android12-5.10
+          - android13-5.10
+          - android13-5.15
+          - android14-5.15
+          - android14-6.1
+          - android16-6.12
+          - android17-6.18
+    container:
+      image: ghcr.io/ylarod/ddk-min:${{ matrix.kmi }}-20260828
+      options: --privileged
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@v4
+
+      - name: Prepare x86_64 kdir
+        run: |
+          set -e
+          clang --version | head -1
+          unset ARCH CROSS_COMPILE
+          export ARCH=x86_64
+          KDIR=/opt/ddk/kdir-x64/${{ matrix.kmi }}
+          mkdir -p "$KDIR"
+          pushd /opt/ddk/src/${{ matrix.kmi }}
+          MODPOST=scripts/mod/modpost.c
+          sed -i -E 's/^([[:space:]]*)check_exports\(mod\);/\1\/\/ check_exports(mod);/' "$MODPOST"
+          sed -i -E 's/^([[:space:]]*)s->module = exp->module;/\1\/\/ s->module = exp->module;/' "$MODPOST"
+          sed -i 's/^static void check_exports(/static void __attribute__((unused)) check_exports(/' "$MODPOST"
+          sed -i 's/__version_ext_names\\") =\\n/__version_ext_names\\") = \\"\\"\\n/' "$MODPOST"
+          make O=$KDIR gki_defconfig
+          scripts/config --file $KDIR/.config -d LTO_CLANG -e LTO_NONE -d LTO_CLANG_THIN -d LTO_CLANG_FULL -d THINLTO
+          if [ "${{ matrix.kmi }}" = "android16-6.12" ] || [ "${{ matrix.kmi }}" = "android17-6.18" ]; then
+            scripts/config --file $KDIR/.config -e CFI_ICALL_NORMALIZE_INTEGERS
+          fi
+          make O=$KDIR modules_prepare
+          make O=$KDIR security/selinux/built-in.a
+          popd
+
+      - name: Build susfs_guard_lkm.ko (x86_64)
+        run: |
+          set -e
+          unset ARCH CROSS_COMPILE
+          export ARCH=x86_64
+          make -k -C "/opt/ddk/kdir-x64/${{ matrix.kmi }}" M="$PWD/kernel" ARCH=x86_64 CC=clang LLVM=1 LLVM_IAS=1 modules -j"$(nproc)"
+          ls -la kernel/susfs_guard_lkm.ko
+
+      - name: Upload x86_64 module
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-${{ matrix.kmi }}-susfs_guard_lkm.ko
+          path: kernel/susfs_guard_lkm.ko
