@@ -6,7 +6,7 @@ Please use [KernelSU-Next-AVD](https://github.com/ymuuuu/KernelSU-Next-AVD) to r
 
 ## Build
 
-Pushes to main run two jobs: `arm64-control` (upstream module, unchanged, catches regressions) and `x86_64-port` (this port). Both must be green. Artifacts per run: `x86_64-susfs_guard_lkm.ko`, `x86_64-susfs_sc` (bare supercall test client) and `x86_64-susfs-lkm-module` (the flashable loader module zip). Prebuilt binaries: the [releases](https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases) page.
+Pushes to main run four jobs: `arm64-control` (upstream module, unchanged, catches regressions), `x86_64-port` (this port, android15-6.6), `x86_64-matrix` (the other KMIs the KernelSU-Next CI covers, android12-5.10 up to android17-6.18) and `x86_64-package`. All must be green. Artifacts per run: `x86_64-android15-6.6-susfs_guard_lkm.ko`, the per-KMI `x86_64-<kmi>-susfs_guard_lkm.ko` set, `x86_64-susfs_sc` (bare supercall test client) and `x86_64-susfs-lkm-module` (the flashable loader module zip, one .ko per KMI, the boot script picks by kernel release). Prebuilt binaries: the [releases](https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases) page.
 
 ## Install
 

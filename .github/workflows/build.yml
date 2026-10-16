@@ -5,9 +5,10 @@ name: build
 # job also builds the release module zip. The arm64 job is the control, it
 # builds the unmodified tree the same way upstream CI does, so a green control
 # plus a red x86_64 job always means the port is the problem, never the
-# pipeline. The x86_64-matrix job compile-proves the module on every other KMI
-# the KernelSU-Next CI builds (PR 1626), added after its android13-5.15 x64
-# job caught a missing include there.
+# pipeline. The x86_64-matrix job builds the module for every other KMI the
+# KernelSU-Next CI covers (PR 1626), added after its android13-5.15 x64 job
+# caught a missing include there; the x86_64-package job merges all eight
+# into one module zip that picks its .ko by kernel release at boot.
 on:
   push:
     branches: [main]
@@ -85,15 +86,16 @@ jobs:
           export ARCH=x86_64
           KDIR=/opt/ddk/kdir-x64/android15-6.6
           # -k keeps going so one broken file does not hide the others; the
-          # step still fails. Expected to fail until the port lands.
+          # step still fails.
           make -k -C "$KDIR" M="$PWD/kernel" ARCH=x86_64 CC=clang LLVM=1 LLVM_IAS=1 modules -j"$(nproc)"
-          ls -la kernel/susfs_guard_lkm.ko
+          cp kernel/susfs_guard_lkm.ko kernel/android15-6.6_susfs_guard_lkm.ko
+          ls -la kernel/android15-6.6_susfs_guard_lkm.ko
 
       - name: Upload x86_64 module
         uses: actions/upload-artifact@v4
         with:
-          name: x86_64-susfs_guard_lkm.ko
-          path: kernel/susfs_guard_lkm.ko
+          name: x86_64-android15-6.6-susfs_guard_lkm.ko
+          path: kernel/android15-6.6_susfs_guard_lkm.ko
 
       - name: Build x86_64 supercall client
         run: |
@@ -108,34 +110,6 @@ jobs:
         with:
           name: x86_64-susfs_sc
           path: susfs_sc_x64
-
-      - name: Package x86_64 loader module
-        run: |
-          set -e
-          clang --target=x86_64-linux-gnu -O2 -nostdlib -static-pie \
-                -fno-stack-protector -fuse-ld=lld -Wl,-e,_start \
-                -o susfs_cli_x64 tools/susfs_cli_x64.c
-          rm -rf module-stage && mkdir module-stage
-          cp module-x64/module.prop module-stage/
-          cp module-x64/post-fs-data.sh module-x64/service.sh module-stage/
-          cp kernel/susfs_guard_lkm.ko module-stage/
-          cp susfs_cli_x64 module-stage/
-          chmod 755 module-stage/post-fs-data.sh module-stage/service.sh module-stage/susfs_cli_x64
-          python3 - <<'EOF'
-          import zipfile
-          from pathlib import Path
-          root = Path("module-stage")
-          with zipfile.ZipFile("susfs_lkm_x64.zip", "w", zipfile.ZIP_STORED) as z:
-              for p in sorted(root.rglob("*")):
-                  if p.is_file():
-                      z.write(p, p.relative_to(root).as_posix())
-          EOF
-
-      - name: Upload x86_64 loader module
-        uses: actions/upload-artifact@v4
-        with:
-          name: x86_64-susfs-lkm-module
-          path: susfs_lkm_x64.zip
 
   # Compile proof on the remaining KMIs of the KernelSU-Next susfs matrix.
   # android15-6.6 is covered by the x86_64-port job above. fail-fast is off so
@@ -191,10 +165,69 @@ jobs:
           # -k keeps going so one broken file does not hide the others; the
           # step still fails.
           make -k -C "/opt/ddk/kdir-x64/${{ matrix.kmi }}" M="$PWD/kernel" ARCH=x86_64 CC=clang LLVM=1 LLVM_IAS=1 modules -j"$(nproc)"
-          ls -la kernel/susfs_guard_lkm.ko
+          cp kernel/susfs_guard_lkm.ko kernel/${{ matrix.kmi }}_susfs_guard_lkm.ko
+          ls -la kernel/${{ matrix.kmi }}_susfs_guard_lkm.ko
 
       - name: Upload x86_64 module
         uses: actions/upload-artifact@v4
         with:
           name: x86_64-${{ matrix.kmi }}-susfs_guard_lkm.ko
-          path: kernel/susfs_guard_lkm.ko
+          path: kernel/${{ matrix.kmi }}_susfs_guard_lkm.ko
+
+  # Release packaging: one module per KMI from the jobs above, selected at
+  # boot by the kernel release (module-x64/post-fs-data.sh). Debug info is
+  # stripped so eight modules stay a sane download; the ddk container has no
+  # zip binary, so the module zip is written with python.
+  x86_64-package:
+    needs: [x86_64-port, x86_64-matrix]
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ylarod/ddk-min:android15-6.6-20260828
+      options: --privileged
+    steps:
+      - name: Checkout module
+        uses: actions/checkout@v4
+
+      - name: Download all KMI modules
+        uses: actions/download-artifact@v4
+        with:
+          pattern: x86_64-*-susfs_guard_lkm.ko
+          path: kos
+          merge-multiple: true
+
+      - name: Build x86_64 CLI
+        run: |
+          set -e
+          clang --target=x86_64-linux-gnu -O2 -nostdlib -static-pie \
+                -fno-stack-protector -fuse-ld=lld -Wl,-e,_start \
+                -o susfs_cli_x64 tools/susfs_cli_x64.c
+
+      - name: Package x86_64 loader module
+        run: |
+          set -e
+          rm -rf module-stage && mkdir module-stage
+          cp module-x64/module.prop module-stage/
+          cp module-x64/post-fs-data.sh module-x64/service.sh module-stage/
+          cp susfs_cli_x64 module-stage/
+          chmod 755 module-stage/post-fs-data.sh module-stage/service.sh module-stage/susfs_cli_x64
+          test "$(ls kos/*_susfs_guard_lkm.ko | wc -l)" = 8
+          for ko in kos/*_susfs_guard_lkm.ko; do
+            llvm-strip -d "$ko"
+            cp "$ko" module-stage/
+          done
+          ls -la module-stage/
+          python3 - <<'EOF'
+          import zipfile
+          from pathlib import Path
+          root = Path("module-stage")
+          with zipfile.ZipFile("susfs_lkm_x64.zip", "w", zipfile.ZIP_STORED) as z:
+              for p in sorted(root.rglob("*")):
+                  if p.is_file():
+                      z.write(p, p.relative_to(root).as_posix())
+          EOF
+
+      - name: Upload x86_64 loader module
+        uses: actions/upload-artifact@v4
+        with:
+          name: x86_64-susfs-lkm-module
+          path: susfs_lkm_x64.zip
