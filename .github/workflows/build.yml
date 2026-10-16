@@ -188,6 +188,8 @@ jobs:
           set -e
           unset ARCH CROSS_COMPILE
           export ARCH=x86_64
+          # -k keeps going so one broken file does not hide the others; the
+          # step still fails.
           make -k -C "/opt/ddk/kdir-x64/${{ matrix.kmi }}" M="$PWD/kernel" ARCH=x86_64 CC=clang LLVM=1 LLVM_IAS=1 modules -j"$(nproc)"
           ls -la kernel/susfs_guard_lkm.ko
 
