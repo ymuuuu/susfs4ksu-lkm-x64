@@ -4,6 +4,8 @@ x86_64 port of [inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lk
 
 Please use [KernelSU-Next-AVD](https://github.com/ymuuuu/KernelSU-Next-AVD) to root your AVD.
 
+Releases and updates are announced on Telegram: [t.me/ymuulabs](https://t.me/ymuulabs).
+
 ## Build
 
 Pushes to main run four jobs: `arm64-control` (upstream module, unchanged, catches regressions), `x86_64-port` (this port, android15-6.6), `x86_64-matrix` (the other KMIs the KernelSU-Next CI covers, android12-5.10 up to android17-6.18) and `x86_64-package`. All must be green. Artifacts per run: `x86_64-android15-6.6-susfs_guard_lkm.ko`, the per-KMI `x86_64-<kmi>-susfs_guard_lkm.ko` set, `x86_64-susfs_sc` (bare supercall test client) and `x86_64-susfs-lkm-module` (the flashable loader module zip, one .ko per KMI, the boot script picks by kernel release). Prebuilt binaries: the [releases](https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases) page.
