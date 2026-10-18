@@ -109,6 +109,13 @@ static bool sus_map_gate_ok(void)
     return susfs_is_current_proc_umounted_app();
 }
 
+/* Lines dropped by the show_map / show_map_vma / show_smap probes: this is the decision.
+ * Kept apart from hide_modules and from n_walk_skip, which is the walk layer that only feeds
+ * it - a vendor kernel can have every walk counter moving and this one at zero, which is
+ * exactly the fingerprint of an inlined show_map_vma (susfs4ksu-lkm#102).  Declared here
+ * because sus_map_skip_vma_pre() below is its first user. */
+static atomic_t n_show_hides = ATOMIC_INIT(0);
+
 /* One handler for show_map_vma (maps) and show_smap (smaps) - both are seq_operations
  * .show callbacks that emit only what they are given, so returning 0 means "handled,
  * nothing printed" (seq_read ignores the value), which is upstream's SUS_MAP effect.
@@ -144,6 +151,7 @@ static int sus_map_skip_vma_pre(struct kprobe *kp, struct pt_regs *regs)
     if (!inode)
         return 0;
     if (sus_map_lookup(inode->i_ino, inode->i_sb->s_dev)) {
+        atomic_inc(&n_show_hides);
         /* ratelimited like sus_path's; the rule stores no path, so ino/dev name it */
         pr_info_ratelimited("sus_map: hid %s line (ino=%lu dev=%lu uid=%u)\n",
                             kp->symbol_name, inode->i_ino,
@@ -166,6 +174,21 @@ static struct kprobe kp_map_smap = {
     .symbol_name = "show_smap",
     .pre_handler = sus_map_skip_vma_pre,
     .post_handler = susfs_kp_noopt_post,
+};
+
+/* The outer half of the maps listing.  show_map() is what proc_pid_maps_op points at
+ * (a proc_ops .proc_show field, i.e. a function pointer in data, which a build cannot
+ * inline away), and it calls show_map_vma() for every line.  A vendor kernel is free to
+ * inline that call - measured on a vivo 6.6.89: `show_map_vma` exists in /proc/kallsyms
+ * and the probe arms, but it never fires, so map_stat shows hides=0 while the listing
+ * stays visible (susfs4ksu-lkm#102).  Probing show_map() instead catches the same vma at
+ * the outer layer; and because a hit there returns straight to the caller, the inner
+ * probe (where it is out of line) never sees the same vma twice.  Both take
+ * (struct seq_file *, void *v) with the vma as the second argument, so one handler serves
+ * all of them. */
+static struct kprobe kp_map_outer = {
+    .symbol_name = "show_map",
+    .pre_handler = sus_map_skip_vma_pre,
 };
 
 /* ---- the page-walk layer: smaps_rollup and pagemap ----
@@ -645,7 +668,7 @@ static bool kr_map_files_ok;
 
 /* Kept in one table so init and exit cannot drift apart. */
 static struct kprobe *const map_probes[] = {
-    &kp_map, &kp_map_smap, &kp_map_walk, &kp_map_walk_vma,
+    &kp_map, &kp_map_smap, &kp_map_outer, &kp_map_walk, &kp_map_walk_vma,
     &kp_gup_remote, &kp_gup_remote_inner,
 };
 #define N_MAP_PROBES ARRAY_SIZE(map_probes)
@@ -666,7 +689,7 @@ static int sus_map_stat_show(char *buf, const struct kernel_param *kp)
 
     return scnprintf(buf, PAGE_SIZE,
                      "rules=%d armed=%d/%d walk_seen=%d walk_vma=%d walk_skipped=%d "
-                     "ops_hit=%d scan_fail=%d nofile=%d nomatch=%d getlink: calls=%d skip=%d nomatch=%d hides=%d putfail=%d\n"
+                     "ops_hit=%d scan_fail=%d nofile=%d nomatch=%d getlink: calls=%d skip=%d nomatch=%d hides=%d putfail=%d line_hides=%d\n"
                      "vm: gup_calls=%d inner_calls=%d hides=%d\n"
                      "ops: smaps=%px smaps_shmem=%px pagemap=%px\n",
                      nmap, armed, (int)N_MAP_PROBES,
@@ -676,7 +699,7 @@ static int sus_map_stat_show(char *buf, const struct kernel_param *kp)
                      atomic_read(&n_walk_nofile), atomic_read(&n_walk_nomatch),
                      atomic_read(&n_getlink_calls), atomic_read(&n_getlink_skip),
                      atomic_read(&n_getlink_nomatch), atomic_read(&n_map_files_hides),
-                     atomic_read(&n_map_files_putfail),
+                     atomic_read(&n_map_files_putfail), atomic_read(&n_show_hides),
                      atomic_read(&n_gup_calls), atomic_read(&n_gup_inner_calls),
                      atomic_read(&n_vm_hides),
                      sus_map_ops_smaps, sus_map_ops_smaps_shmem,

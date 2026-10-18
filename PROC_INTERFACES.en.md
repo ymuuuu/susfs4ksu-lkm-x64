@@ -98,7 +98,7 @@ Redirect `open()` to another file.
 
 ```
 (empty)
-hooks: open=0 dpath=0 statfs=0 maps=0 fdinfo=0 | rev hits: dpath=0 statfs=0 maps=0/0/0 fdinfo=0/0 | su_sid=2907
+hooks: forward=0 dpath=0 statfs=0 maps=0 fdinfo=0 | rev hits: dpath=0 statfs=0 maps=0/0/0 fdinfo=0/0 | su_sid=2907
 ```
 
 **Write**:
@@ -171,7 +171,7 @@ Decides which lines the mount hiding (`ksu_susfs hide_sus_mnts_for_non_su_procs 
 
 ```sh
 cat /proc/susfs_hide_mounts
-# mount prefixes: 2/8, rescans=1, recorded=0, hidden_by_identity=0, learned_ids=0
+# mount prefixes: 2/64, rescans=1, recorded=0, hidden_by_identity=0, learned_ids=0
 # prefixes: /data/adb/ /data/local/tmp/
 
 # write commands

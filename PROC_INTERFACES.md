@@ -98,7 +98,7 @@ echo 1 > .../parameters/opath_dump     # 只打印每个入口的值与符号，
 
 ```
 (empty)
-hooks: open=0 dpath=0 statfs=0 maps=0 fdinfo=0 | rev hits: dpath=0 statfs=0 maps=0/0/0 fdinfo=0/0 | su_sid=2907
+hooks: forward=0 dpath=0 statfs=0 maps=0 fdinfo=0 | rev hits: dpath=0 statfs=0 maps=0/0/0 fdinfo=0/0 | su_sid=2907
 ```
 
 **写**：
@@ -171,7 +171,7 @@ echo clear                     > /proc/susfs_hide_modules   # 一个都不隐藏
 
 ```sh
 cat /proc/susfs_hide_mounts
-# mount prefixes: 2/8, rescans=1, recorded=0, hidden_by_identity=0, learned_ids=0
+# mount prefixes: 2/64, rescans=1, recorded=0, hidden_by_identity=0, learned_ids=0
 # prefixes: /data/adb/ /data/local/tmp/
 
 # 写命令
