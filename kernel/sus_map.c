@@ -400,7 +400,7 @@ static void sus_map_walk_dbg_log(const char *what, struct mm_struct *mm,
  * holds for read - so sus_map_find_vma()'s container cannot change underneath it. */
 static int sus_map_skip_walk_pre(struct kprobe *kp, struct pt_regs *regs)
 {
-    const void *ops = (const void *)susfs_sc_arg(regs, 3);
+    const void *ops = (const void *)susfs_kp_arg(regs, 3);
     struct mm_struct *mm;
     struct vm_area_struct *vma;
     unsigned long start;

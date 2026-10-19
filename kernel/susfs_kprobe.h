@@ -125,6 +125,21 @@ static __always_inline void susfs_set_sc_arg(struct pt_regs *regs,
 #endif
 }
 
+/* Argument access for a probe on a plain kernel function, not a syscall
+ * wrapper.  The C calling convention passes argument 3 in rcx on x86_64,
+ * where the syscall ABI uses r10 (rcx holds the user return address there);
+ * every other index is the same register in both, and arm64 is the same
+ * array either way. */
+static __always_inline unsigned long susfs_kp_arg(const struct pt_regs *regs,
+						  unsigned int idx)
+{
+#ifdef __x86_64__
+	if (idx == 3)
+		return regs->cx;
+#endif
+	return susfs_sc_arg(regs, idx);
+}
+
 /* The return value of a probed function, as a kretprobe's return handler
  * sees it.  arm64 hands it back in the same x0 that carried argument 0;
  * x86_64 keeps it in rax, and the rethook trampoline restores rax from the
