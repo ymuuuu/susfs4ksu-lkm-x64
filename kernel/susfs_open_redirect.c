@@ -34,7 +34,7 @@
  * /proc/susfs_open_redirect, because registering only proves the symbol exists - this feature has hit that wall twice
  * (show_vma_header_prefix, then __d_path: both registered, both stayed at 0).
  *
- * /proc/susfs_open_redirect: add_open_redirect <target> <redirected> <uid_scheme> | del <target> | clear
+ * /proc/susfs_open_redirect: add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] | del <target> | clear
  */
 #include <linux/module.h>
 #include <linux/kprobes.h>
@@ -134,6 +134,10 @@ struct sus_or_entry {
 	 * that is what keeps a rule from pinning a filesystem in place. */
 	struct kstatfs spoofed_kstatfs;
 	int uid_scheme;
+	/* Fork-only, not upstream: the rule renames instead of hiding.  The reverse lookups skip it, so no face ever
+	 * rewrites it back to the target, for any process; the forward half is unchanged.  /proc only, the supercall
+	 * struct has no room for it and stays upstream's. */
+	bool no_reverse;
 	/* Set while the slot is being rewritten or has been deleted.  The reader checks this with
 	 * READ_ONCE and the writer clears it LAST, so false means the rest of the entry is complete. */
 	bool dead;
@@ -303,6 +307,8 @@ static struct sus_or_entry *or_find_by_redirected_inode(unsigned long ino, dev_t
 		if (READ_ONCE(or_entries[i].dead))
 			continue;
 		smp_rmb();
+		if (or_entries[i].no_reverse)
+			continue;
 		if (or_entries[i].redirected_ino == ino &&
 		    or_entries[i].redirected_dev == dev &&
 		    or_entries[i].redirected_igen == gen)
@@ -332,7 +338,8 @@ bool susfs_open_redirect_spoof_ids(unsigned long ino, unsigned long *out_ino,
 		if (READ_ONCE(or_entries[i].dead))
 			continue;
 		smp_rmb();
-		if (or_entries[i].redirected_ino != ino)
+		/* skipped before the tie count: a rename-only rule is not a second candidate for this ino */
+		if (or_entries[i].no_reverse || or_entries[i].redirected_ino != ino)
 			continue;
 		e = &or_entries[i];
 		if (++hits > 1)
@@ -1050,10 +1057,11 @@ static int or_proc_show(struct seq_file *m, void *v)
 		for (i = 0; i < READ_ONCE(nor); i++) {
 			if (READ_ONCE(or_entries[i].dead))
 				continue;
-			seq_printf(m, "%s -> %s uid=%d (ino=%lu dev=%lu mnt=%lu | rev: ino=%lu dev=%lu)\n",
+			seq_printf(m, "%s -> %s uid=%d%s (ino=%lu dev=%lu mnt=%lu | rev: ino=%lu dev=%lu)\n",
 				   or_entries[i].target_pathname,
 				   or_entries[i].redirected_pathname,
 				   or_entries[i].uid_scheme,
+				   or_entries[i].no_reverse ? " no_reverse" : "",
 				   or_entries[i].target_ino,
 				   (unsigned long)or_entries[i].target_dev,
 				   or_entries[i].target_mnt_id,
@@ -1109,7 +1117,7 @@ static int split_ws(char *buf, char **argv, int max)
 
 static void or_reclaim_slot(struct sus_or_entry *e);
 
-static int or_add(const char *target, const char *redirected, int scheme)
+static int or_add(const char *target, const char *redirected, int scheme, bool no_reverse)
 {
 	struct sus_or_entry *e;
 	struct path tp, rp;
@@ -1249,6 +1257,7 @@ static int or_add(const char *target, const char *redirected, int scheme)
 	e->redirected_igen = ri->i_generation;
 	e->spoofed_kstatfs = spoofed_kstatfs;
 	e->uid_scheme = scheme;
+	e->no_reverse = no_reverse;
 	smp_wmb();
 	WRITE_ONCE(e->dead, false);	/* publish last: readers key off this */
 
@@ -1392,11 +1401,13 @@ static ssize_t or_proc_write(struct file *file, const char __user *buf,
 	mutex_lock(&or_lock);
 	err = -EINVAL;
 
-	if (!strcmp(argv[0], "add_open_redirect") && argc == 4) {
+	/* The 5th token is checked before or_add() runs, so a rejected write registers nothing. */
+	if (!strcmp(argv[0], "add_open_redirect") &&
+	    (argc == 4 || (argc == 5 && !strcmp(argv[4], "no_reverse")))) {
 		if (kstrtol(argv[3], 10, &scheme))
 			err = -EINVAL;
 		else
-			err = or_add(argv[1], argv[2], (int)scheme);
+			err = or_add(argv[1], argv[2], (int)scheme, argc == 5);
 	} else if (!strcmp(argv[0], "del") && argc == 2) {
 		or_del(argv[1]);
 		err = 0;
@@ -1431,7 +1442,7 @@ void susfs_open_redirect_supercall(void __user **arg)
 
 	mutex_lock(&or_lock);
 	err = or_add(info.target_pathname, info.redirected_pathname,
-		     info.uid_scheme);
+		     info.uid_scheme, false);
 	mutex_unlock(&or_lock);
 	info.err = err;
 out:
