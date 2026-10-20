@@ -1,6 +1,6 @@
 id=susfs_lkm_x64
 name=SUSFS LKM x86_64
-version=v0.0.6
-versionCode=6
+version=v0.0.7
+versionCode=7
 author=ymuuu, inforcqb
-description=Loads the x86_64 susfs LKM at boot on the android12-5.10 .. android17-6.18 x86_64 GKI kernels, auto-selected by kernel release (runtime-tested on the Android 16 x86_64 emulator, android15-6.6; the rest are CI-built). sus_map now also hides mappings from /proc/<pid>/pagemap on x86_64. The /proc/susfs_* control nodes follow the KernelSU su gate only where they carry the ksu_file label, root-only otherwise (always on 6.4+). Synced with upstream susfs4ksu-lkm through ba5c6d0. Also installs the x86_64 susfs CLI. Port repo: susfs4ksu-lkm-x64.
+description=Loads the x86_64 susfs LKM at boot on the android12-5.10 .. android17-6.18 x86_64 GKI kernels, auto-selected by kernel release (runtime-tested on the Android 16 x86_64 emulator, android15-6.6; the rest are CI-built). sus_map now also hides mappings from /proc/<pid>/pagemap on x86_64. The /proc/susfs_* control nodes follow the KernelSU su gate only where they carry the ksu_file label, root-only otherwise (always on 6.4+). add_open_redirect takes an optional no_reverse flag: the rule renames instead of hiding. Synced with upstream susfs4ksu-lkm through ba5c6d0. Also installs the x86_64 susfs CLI. Port repo: susfs4ksu-lkm-x64.
