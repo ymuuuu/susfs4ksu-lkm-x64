@@ -184,7 +184,7 @@ static inline bool susfs_control_node_allowed(void)
 }
 
 /* open_redirect, reverse direction, for callers that only have an inode NUMBER: fdinfo prints "ino:\t<i>" with no device, so
- * this is a lookup by ino alone and returns false when the number is ambiguous (two rules, same redirected ino) or the caller is
+ * this is a lookup by ino alone and returns false when the number is ambiguous (two rules without no_reverse, same redirected ino) or the caller is
  * not one the reverse disguise applies to.  On success *out_ino is the target inode to show, *out_mnt_id the target mount id. */
 bool susfs_open_redirect_spoof_ids(unsigned long ino, unsigned long *out_ino, unsigned long *out_mnt_id);
 
