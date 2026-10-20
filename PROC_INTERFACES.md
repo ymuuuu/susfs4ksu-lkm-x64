@@ -105,9 +105,18 @@ hooks: forward=0 dpath=0 statfs=0 maps=0 fdinfo=0 | rev hits: dpath=0 statfs=0 m
 
 ```sh
 echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme>" > /proc/susfs_open_redirect
+echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme> no_reverse" > /proc/susfs_open_redirect
 echo "del <目标>"                                               > /proc/susfs_open_redirect
 echo clear                                                      > /proc/susfs_open_redirect
 ```
+
+`no_reverse`（可选的第五个参数，v0.0.7 起，仅本移植版）：open 仍被重定向，但该规则对所有进程都跳过下面的反向伪装。**`no_reverse` 规则是改名，不是隐藏**：所有 app 在 `maps`、fd 链接、fdinfo 和 `statfs()` 里看到的都是被重定向到的名字。列表行在 `uid=N` 后带 ` no_reverse`：
+
+```
+/dev/goldfish_address_space -> /dev/gpu_as0 uid=2 no_reverse (ino=780 dev=18 mnt=36 | rev: ino=822 dev=18)
+```
+
+第五个参数是其他任何值都返回 `-EINVAL`，且不注册任何东西。v0.0.7 之前的版本对所有五个参数的写入都返回 `-EINVAL`，所以调用方可以先试带标志的写入，失败再回退。对同一目标再次添加会替换该规则，不带 `no_reverse` 重新添加即清除该标志。supercall（`ksu_susfs`）没有对应字段，总是添加普通规则；请用 `/proc` 或本模块的 `susfs add_open_redirect <target> <redirected> <uid_scheme> [no_reverse]`。
 
 `uid_scheme` 取值 `0..4`，越界在 `add` 阶段直接拒绝（`-EINVAL`）：
 
