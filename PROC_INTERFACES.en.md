@@ -106,17 +106,21 @@ hooks: forward=0 dpath=0 statfs=0 maps=0 fdinfo=0 | rev hits: dpath=0 statfs=0 m
 ```sh
 echo "add_open_redirect <target> <redirected-to file> <uid_scheme>" > /proc/susfs_open_redirect
 echo "add_open_redirect <target> <redirected-to file> <uid_scheme> no_reverse" > /proc/susfs_open_redirect
+echo "add_open_redirect <target> <redirected-to file> <uid_scheme> app_only" > /proc/susfs_open_redirect
+echo "add_open_redirect <target> <redirected-to file> <uid_scheme> no_reverse app_only" > /proc/susfs_open_redirect
 echo "del <target>"                                                 > /proc/susfs_open_redirect
 echo clear                                                          > /proc/susfs_open_redirect
 ```
 
-`no_reverse` (optional fifth token, since v0.0.7, this port only): the open is still redirected, but the reverse spoofing below is skipped for that rule, for every process. **A `no_reverse` rule is a rename, not a hide**: every app sees the redirected-to name in `maps`, fd links, fdinfo and `statfs()`. Its listing line carries ` no_reverse` after `uid=N`:
+`no_reverse` (optional token 5 or 6, since v0.0.7, this port only): the open is still redirected, but the reverse spoofing below is skipped for that rule, for every process. **A `no_reverse` rule is a rename, not a hide**: every app sees the redirected-to name in `maps`, fd links, fdinfo and `statfs()`. Its listing line carries ` no_reverse` after `uid=N`:
 
 ```
 /dev/goldfish_address_space -> /dev/gpu_as0 uid=2 no_reverse (ino=780 dev=18 mnt=36 | rev: ino=822 dev=18)
 ```
 
-Any other fifth token returns `-EINVAL` and registers nothing. Builds before v0.0.7 reject every five-token write with `-EINVAL`, so a caller can try the flagged write and fall back. Adding the same target again replaces the rule, so a re-add without `no_reverse` clears the flag. The supercall (`ksu_susfs`) has no field for it and always adds a normal rule; use `/proc` or this module's `susfs add_open_redirect <target> <redirected> <uid_scheme> [no_reverse]`.
+`app_only` (optional token 5 or 6, this port only): the forward redirect applies only when the opening process's executable is `/system/bin/app_process64` or `/system/bin/app_process32`. The comparison is by inode number and device, not by path. A process with no `mm` or no `exe_file` does not match, and neither does a program an app starts with `execve` (its exe is different), so the original open runs there. The app_process inodes are resolved with `kern_path()` when the first `app_only` rule is added. A file that does not exist is skipped; if neither exists the add fails with `-ENOENT` and registers nothing. If the kernel has no `get_mm_exe_file` symbol the add fails with `-EOPNOTSUPP`. Builds without `app_only` reject the token with `-EINVAL`, so a caller can try it and fall back. Reverse spoofing is not affected. Its listing line carries ` app_only`.
+
+Tokens 5 and 6 accept `no_reverse` and `app_only`, in any order, each at most once. Any other token, or a duplicate, returns `-EINVAL` and registers nothing. Builds before v0.0.7 reject every five-token write with `-EINVAL`, so a caller can try the flagged write and fall back. Adding the same target again replaces the rule, so a re-add without the flags clears them. The supercall (`ksu_susfs`) has no field for either flag and always adds a normal rule; use `/proc` or this module's `susfs add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] [app_only]`.
 
 `uid_scheme` takes `0..4`; out of range is refused at the `add` stage (`-EINVAL`):
 

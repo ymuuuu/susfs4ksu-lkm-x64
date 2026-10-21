@@ -226,7 +226,8 @@ bool susfs_open_redirect_spoof_ids(unsigned long ino, unsigned long *out_ino, un
 /* Asked by the name-layer entry hook (susfs_or_entry.c) for the path a caller is about to open.
  * The redirect target is COPIED into the caller's buffer (buflen >= SUSFS_OR_PATH_MAX) while the
  * lookup runs under rcu_read_lock, and the return value is false when no live rule matches (or the
- * name does not fit).  A pointer into the rule could not be handed out any more: rule slots are
+ * name does not fit).  An app_only rule also requires the caller's exe file to be app_process64 or
+ * app_process32.  A pointer into the rule could not be handed out any more: rule slots are
  * recycled now (a deleted rule's slot is handed out again once a grace period has passed), so
  * nothing inside an entry may be read after the lookup returns. */
 bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t buflen);

@@ -34,7 +34,7 @@
  * /proc/susfs_open_redirect, because registering only proves the symbol exists - this feature has hit that wall twice
  * (show_vma_header_prefix, then __d_path: both registered, both stayed at 0).
  *
- * /proc/susfs_open_redirect: add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] | del <target> | clear
+ * /proc/susfs_open_redirect: add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] [app_only] | del <target> | clear
  */
 #include <linux/module.h>
 #include <linux/kprobes.h>
@@ -50,6 +50,7 @@
 #include <linux/rcupdate.h>	/* the entry hook's match runs under rcu_read_lock, like the probes */
 #include <linux/statfs.h>	/* struct kstatfs: the snapshot the reverse statfs face answers from */
 #include <linux/mm.h>		/* struct vm_area_struct (the maps reverse face) */
+#include <linux/sched.h>	/* current->mm, for the app_only exe check */
 #include <linux/kdev_t.h>	/* MAJOR/MINOR, to render dev:ino the way proc does */
 #include <linux/kernel.h>	/* scnprintf, for the same rendering */
 #include <linux/security.h>	/* security_secctx_to_secid */
@@ -109,6 +110,16 @@ static __nocfi noinline int or_statfs_snapshot(const struct path *path, struct k
 	return or_vfs_statfs_fn(path, out);
 }
 
+/* get_mm_exe_file, resolved by name for the app_only gate.  It is EXPORT_SYMBOL_GPL in mainline, but GKI's module
+ * symbol list is not guaranteed to carry it, so it is looked up in kallsyms like the symbols above.  The wrapper needs
+ * __nocfi for the same reason as or_statfs_snapshot(): the call goes through a function pointer. */
+static struct file *(*or_get_mm_exe_file_fn)(struct mm_struct *mm);
+
+static __nocfi noinline struct file *or_mm_exe_file(struct mm_struct *mm)
+{
+	return or_get_mm_exe_file_fn(mm);
+}
+
 struct sus_or_entry {
 	char target_pathname[OR_PATH_MAX];
 	char redirected_pathname[OR_PATH_MAX];
@@ -138,6 +149,10 @@ struct sus_or_entry {
 	 * rewrites it back to the target, for any process; the forward half is unchanged.  /proc only, the supercall
 	 * struct has no room for it and stays upstream's. */
 	bool no_reverse;
+	/* Fork-only, forward only: the redirect applies only when the opening process runs app_process64 or
+	 * app_process32 (see or_is_app_process()).  An exec'd child has a different exe, so a rule can spare the
+	 * app's own opens without hitting the programs the app starts.  /proc only, like no_reverse. */
+	bool app_only;
 	/* Set while the slot is being rewritten or has been deleted.  The reader checks this with
 	 * READ_ONCE and the writer clears it LAST, so false means the rest of the entry is complete. */
 	bool dead;
@@ -237,6 +252,72 @@ static bool or_uid_matches(int scheme)
 	}
 }
 
+/* The inode numbers app_only compares against.  Resolved once, when the first app_only rule is added, with kern_path():
+ * a file that is not there (app_process32 on a 64-bit only image) is skipped, and when neither exists the rule cannot
+ * be registered.  Numbers instead of a held path, like the rules themselves, so nothing here pins /system. */
+#define OR_APP_PROC_MAX 2
+static unsigned long or_app_ino[OR_APP_PROC_MAX];
+static dev_t or_app_dev[OR_APP_PROC_MAX];
+static int or_app_n;
+static bool or_app_resolved;
+
+static int or_resolve_app_procs(void)
+{
+	static const char *const paths[OR_APP_PROC_MAX] = {
+		"/system/bin/app_process64",
+		"/system/bin/app_process32",
+	};
+	int i;
+
+	if (or_app_resolved)
+		return or_app_n;
+	for (i = 0; i < OR_APP_PROC_MAX; i++) {
+		struct path p;
+		struct inode *inode;
+
+		if (kern_path(paths[i], LOOKUP_FOLLOW, &p))
+			continue;
+		inode = d_backing_inode(p.dentry);
+		if (inode) {
+			or_app_ino[or_app_n] = inode->i_ino;
+			or_app_dev[or_app_n] = inode->i_sb->s_dev;
+			or_app_n++;
+		}
+		path_put(&p);
+	}
+	if (or_app_n)
+		or_app_resolved = true;
+	return or_app_n;
+}
+
+/* The app_only gate: the opening process's own executable is one of the app_process files above.  Identity is
+ * (i_ino, s_dev), not the name.  No mm or no exe_file is "no match", so the caller's original open runs. */
+static bool or_is_app_process(void)
+{
+	struct file *exe;
+	struct inode *inode;
+	bool hit = false;
+	int i;
+
+	if (!current->mm || !or_app_n || !or_get_mm_exe_file_fn)
+		return false;
+	exe = or_mm_exe_file(current->mm);
+	if (!exe)
+		return false;
+	inode = file_inode(exe);
+	if (inode) {
+		for (i = 0; i < or_app_n; i++) {
+			if (inode->i_ino == or_app_ino[i] &&
+			    inode->i_sb->s_dev == or_app_dev[i]) {
+				hit = true;
+				break;
+			}
+		}
+	}
+	fput(exe);
+	return hit;
+}
+
 static struct sus_or_entry *or_find_by_path(const char *target)
 {
 	int i;
@@ -282,6 +363,7 @@ bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t b
 	struct inode *inode;
 	struct sus_or_entry *e;
 	bool hit = false;
+	bool app_only = false;
 
 	if (!READ_ONCE(nor) || !path->dentry)
 		return false;
@@ -292,9 +374,15 @@ bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t b
 	rcu_read_lock();
 	e = or_find_by_inode(inode->i_ino, inode->i_sb->s_dev, inode->i_generation);
 	if (e && or_uid_matches(e->uid_scheme) && e->redirected_pathname[0] &&
-	    strscpy(buf, e->redirected_pathname, buflen) >= 0)
+	    strscpy(buf, e->redirected_pathname, buflen) >= 0) {
+		app_only = e->app_only;
 		hit = true;
+	}
 	rcu_read_unlock();
+	/* The exe check runs only for a rule that already matched, and outside the rcu section because the accessor
+	 * takes its own reference and the release follows. */
+	if (hit && app_only && !or_is_app_process())
+		hit = false;
 	return hit;
 }
 
@@ -984,6 +1072,10 @@ int susfs_open_redirect_init(void)
 		(void *)find_kernel_symbol_exact("security_cred_getsecid");
 	if (!or_cred_getsecid)
 		pr_warn("open_redirect: security_cred_getsecid not found - schemes 1/2 will be refused\n");
+	or_get_mm_exe_file_fn =
+		(void *)find_kernel_symbol_exact("get_mm_exe_file");
+	if (!or_get_mm_exe_file_fn)
+		pr_warn("open_redirect: get_mm_exe_file not found - app_only rules will be refused\n");
 	or_resolve_su_sid();
 
 	/* Only the /proc node is optional.  This gate must never return early and skip other work: use_proc is a policy
@@ -1057,11 +1149,12 @@ static int or_proc_show(struct seq_file *m, void *v)
 		for (i = 0; i < READ_ONCE(nor); i++) {
 			if (READ_ONCE(or_entries[i].dead))
 				continue;
-			seq_printf(m, "%s -> %s uid=%d%s (ino=%lu dev=%lu mnt=%lu | rev: ino=%lu dev=%lu)\n",
+			seq_printf(m, "%s -> %s uid=%d%s%s (ino=%lu dev=%lu mnt=%lu | rev: ino=%lu dev=%lu)\n",
 				   or_entries[i].target_pathname,
 				   or_entries[i].redirected_pathname,
 				   or_entries[i].uid_scheme,
 				   or_entries[i].no_reverse ? " no_reverse" : "",
+				   or_entries[i].app_only ? " app_only" : "",
 				   or_entries[i].target_ino,
 				   (unsigned long)or_entries[i].target_dev,
 				   or_entries[i].target_mnt_id,
@@ -1117,7 +1210,8 @@ static int split_ws(char *buf, char **argv, int max)
 
 static void or_reclaim_slot(struct sus_or_entry *e);
 
-static int or_add(const char *target, const char *redirected, int scheme, bool no_reverse)
+static int or_add(const char *target, const char *redirected, int scheme, bool no_reverse,
+		  bool app_only)
 {
 	struct sus_or_entry *e;
 	struct path tp, rp;
@@ -1134,6 +1228,19 @@ static int or_add(const char *target, const char *redirected, int scheme, bool n
 	if (!susfs_abi_path_ok(target, OR_PATH_MAX) ||
 	    !susfs_abi_path_ok(redirected, OR_PATH_MAX))
 		return -ENAMETOOLONG;
+
+	/* app_only needs the executable accessor and at least one app_process inode.  Both are checked before anything
+	 * is registered, so a refused rule leaves no rule and no hooks behind. */
+	if (app_only) {
+		if (!or_get_mm_exe_file_fn) {
+			SUSFS_LOGI("open_redirect: app_only refused: get_mm_exe_file not resolved\n");
+			return -EOPNOTSUPP;
+		}
+		if (!or_resolve_app_procs()) {
+			SUSFS_LOGI("open_redirect: app_only refused: neither app_process64 nor app_process32 exists\n");
+			return -ENOENT;
+		}
+	}
 
 	rc = kern_path(target, LOOKUP_FOLLOW, &tp);
 	if (rc)
@@ -1258,6 +1365,7 @@ static int or_add(const char *target, const char *redirected, int scheme, bool n
 	e->spoofed_kstatfs = spoofed_kstatfs;
 	e->uid_scheme = scheme;
 	e->no_reverse = no_reverse;
+	e->app_only = app_only;
 	smp_wmb();
 	WRITE_ONCE(e->dead, false);	/* publish last: readers key off this */
 
@@ -1401,13 +1509,24 @@ static ssize_t or_proc_write(struct file *file, const char __user *buf,
 	mutex_lock(&or_lock);
 	err = -EINVAL;
 
-	/* The 5th token is checked before or_add() runs, so a rejected write registers nothing. */
-	if (!strcmp(argv[0], "add_open_redirect") &&
-	    (argc == 4 || (argc == 5 && !strcmp(argv[4], "no_reverse")))) {
-		if (kstrtol(argv[3], 10, &scheme))
+	/* Tokens 5 and 6 are checked before or_add() runs, so a rejected write registers nothing.  Both flags are
+	 * optional, in any order, each at most once; anything else is -EINVAL. */
+	if (!strcmp(argv[0], "add_open_redirect") && argc >= 4 && argc <= 6) {
+		bool no_reverse = false, app_only = false, flags_ok = true;
+		int i;
+
+		for (i = 4; i < argc; i++) {
+			if (!strcmp(argv[i], "no_reverse") && !no_reverse)
+				no_reverse = true;
+			else if (!strcmp(argv[i], "app_only") && !app_only)
+				app_only = true;
+			else
+				flags_ok = false;
+		}
+		if (!flags_ok || kstrtol(argv[3], 10, &scheme))
 			err = -EINVAL;
 		else
-			err = or_add(argv[1], argv[2], (int)scheme, argc == 5);
+			err = or_add(argv[1], argv[2], (int)scheme, no_reverse, app_only);
 	} else if (!strcmp(argv[0], "del") && argc == 2) {
 		or_del(argv[1]);
 		err = 0;
@@ -1442,7 +1561,7 @@ void susfs_open_redirect_supercall(void __user **arg)
 
 	mutex_lock(&or_lock);
 	err = or_add(info.target_pathname, info.redirected_pathname,
-		     info.uid_scheme, false);
+		     info.uid_scheme, false, false);
 	mutex_unlock(&or_lock);
 	info.err = err;
 out:
