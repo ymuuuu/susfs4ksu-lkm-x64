@@ -64,6 +64,8 @@ static const char *const susfs_self_hide_paths[] = {
     /* sus_path's own interface (the rule listing): it goes through the same table it
      * prints, so a broken rule table is visible in the very view that reports it. */
     SUSFS_PATH_NODE,
+    /* The uname machine spoof node: it decides "translated process" from the marker VMA. */
+    SUSFS_UNAME_MACHINE_NODE,
     /* The O_PATH layer's node: it reports the four sys_call_table/compat_sys_call_table
      * entries and the counters that say whether a wrapper ever ran. */
     SUSFS_OPATH_NODE,

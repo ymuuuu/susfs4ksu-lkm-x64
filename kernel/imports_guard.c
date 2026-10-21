@@ -143,6 +143,10 @@ static const struct susfs_import susfs_imports[] = {
     IMP(_raw_spin_lock_irqsave),
     IMP(_raw_spin_unlock),
     IMP(_raw_spin_unlock_irqrestore),
+    /* mmap_read_lock()/mmap_read_unlock() in susfs_uname.c's machine callback bottom out in these
+     * two rwsem entry points. */
+    IMP(down_read),
+    IMP(up_read),
     IMP(__rcu_read_lock),
     IMP(__rcu_read_unlock),
     IMP(__put_cred),

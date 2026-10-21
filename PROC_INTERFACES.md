@@ -15,6 +15,7 @@
 |---|---|---|
 | [`/proc/susfs_kstat`](#procsusfs_kstat) | `stat()`/`maps` 结果伪装 | `add_sus_kstat` / `add_sus_kstat_statically` / `update_sus_kstat` / `update_sus_kstat_full_clone` / `del` / `clear` |
 | [`/proc/susfs_open_redirect`](#procsusfs_open_redirect) | `open()` 重定向（含反向面：`d_path`/`statfs`/`maps`/`fdinfo`） | `add_open_redirect` / `del` / `clear` |
+| [`/proc/susfs_uname_machine`](#procsusfs_uname_machine) | 对翻译运行的 arm64 进程伪装 `uname()` 的 `machine` | `set <machine> <标记路径>` / `clear` |
 | [`/proc/susfs_enable_log`](#procsusfs_enable_log) | 运行期日志开关 | `0` / `1` |
 | [`/proc/susfs_avc_spoof`](#procsusfs_avc_spoof) | 隐藏 SELinux AVC 审计日志 | `0` / `1` |
 | [`/proc/susfs_hide_modules`](#procsusfs_hide_modules) | 按名字把**其它内核模块**从 `/proc/modules` 去掉 | `add <名字>` / `del <名字>` / `set <名字>…` / `clear` |
@@ -133,6 +134,34 @@ echo clear                                                      > /proc/susfs_op
 | 4 | 会被 umount，不看 uid |
 
 反向伪装（`d_path()` / `statfs()` / fdinfo / `maps`）**不看**规则的 `uid_scheme`：判定只看"这个进程会不会被 umount"，所以 **scheme 0 的规则对 app 进程同样做反向伪装**。
+
+---
+
+## /proc/susfs_uname_machine
+
+只对运行翻译后 arm64 代码的进程伪装 `uname()` 的 `machine` 字段。
+
+在二进制翻译下（本 x86_64 镜像），arm64 app 的原生代码读到的是宿主 `uname()` 的结果，`machine` 是 `x86_64`，而同一 app 里 Java 的 `os.arch` 是 `aarch64`。这个节点只对这类翻译进程把 `machine` 改成给定字符串，x86_64 app、root 和 `adb shell` 仍读到真实值。判定方式是该进程有一处内存映射由标记文件支撑：每个翻译运行的 arm64 app 都映射 `/system/bin/arm64/linker64`，其他进程不映射。匹配用的是标记文件的 inode 号与超级块设备号，在写入命令时解析。
+
+**读**：一行状态，或未开启时的一行：
+
+```
+machine=aarch64 marker=/system/bin/arm64/linker64 (ino=780 dev=18) spoofed=3
+machine spoof: off
+```
+
+`spoofed` 是被改写的调用次数。
+
+**写**：
+
+```sh
+echo "set aarch64 /system/bin/arm64/linker64" > /proc/susfs_uname_machine
+echo clear                                     > /proc/susfs_uname_machine
+```
+
+`set` 后跟 machine 字符串和标记路径。字符串不能为空、最长 64 字节、不含空白或控制字符；路径当场解析，解析不了返回 `-ENOENT`。再次 `set` 覆盖前一次。`clear` 关掉伪装。其他任何写法返回 `-EINVAL`。
+
+release/version 伪装（`CMD_SUSFS_SET_UNAME`）与这一项互相独立：各自单独开关，只要还有一个开着，`newuname` 钩子就保持注册。改写发生在系统调用返回用户态之前；分配不到工作项的调用保持原值。
 
 ---
 

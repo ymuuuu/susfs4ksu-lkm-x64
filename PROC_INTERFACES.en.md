@@ -15,6 +15,7 @@ Write commands **return `len` on success, a negative errno on failure**.
 |---|---|---|
 | [`/proc/susfs_kstat`](#procsusfs_kstat) | spoof `stat()`/`maps` results | `add_sus_kstat` / `add_sus_kstat_statically` / `update_sus_kstat` / `update_sus_kstat_full_clone` / `del` / `clear` |
 | [`/proc/susfs_open_redirect`](#procsusfs_open_redirect) | redirect `open()` (with the reverse side: `d_path`/`statfs`/`maps`/`fdinfo`) | `add_open_redirect` / `del` / `clear` |
+| [`/proc/susfs_uname_machine`](#procsusfs_uname_machine) | spoof the `uname()` `machine` field for translated arm64 processes | `set <machine> <marker path>` / `clear` |
 | [`/proc/susfs_enable_log`](#procsusfs_enable_log) | runtime log switch | `0` / `1` |
 | [`/proc/susfs_avc_spoof`](#procsusfs_avc_spoof) | hide KernelSU traces in the SELinux AVC audit log | `0` / `1` |
 | [`/proc/susfs_hide_modules`](#procsusfs_hide_modules) | drop **other kernel modules** from `/proc/modules` by name | `add <name>` / `del <name>` / `set <name>…` / `clear` |
@@ -133,6 +134,34 @@ Tokens 5 and 6 accept `no_reverse` and `app_only`, in any order, each at most on
 | 4 | gets umounted, regardless of uid |
 
 The reverse spoofing (`d_path()` / `statfs()` / fdinfo / `maps`) does **not** look at the rule's `uid_scheme`: the decision only looks at "will this process be umounted", so **a scheme-0 rule still does reverse spoofing for app processes**.
+
+---
+
+## /proc/susfs_uname_machine
+
+Spoof the `machine` field of `uname()` for processes that run translated arm64 code.
+
+Under a binary translator (this x86_64 image) an arm64 app's native code reads the host's `uname()` result, so `machine` says `x86_64` while Java's `os.arch` in the same app says `aarch64`. This node makes `machine` read as the given string for the translated processes only, so x86_64 apps, root and `adb shell` keep the real value. A process is translated when one of its memory mappings is backed by the marker file: every translated arm64 app maps `/system/bin/arm64/linker64`, the others do not. The match is the marker's inode number and superblock device, resolved when the command is written.
+
+**Read**: one line with the state, or the off line:
+
+```
+machine=aarch64 marker=/system/bin/arm64/linker64 (ino=780 dev=18) spoofed=3
+machine spoof: off
+```
+
+`spoofed` counts the calls whose `machine` field was rewritten.
+
+**Write**:
+
+```sh
+echo "set aarch64 /system/bin/arm64/linker64" > /proc/susfs_uname_machine
+echo clear                                     > /proc/susfs_uname_machine
+```
+
+`set` takes the machine string and the marker path. The string must be non-empty, at most 64 bytes, and contain no whitespace or control characters; the path is resolved at once, and a path that does not resolve is refused with `-ENOENT`. A second `set` replaces the first. `clear` turns the spoof off. Anything else returns `-EINVAL`.
+
+The release/version spoof (`CMD_SUSFS_SET_UNAME`) and this one are independent: each is on or off on its own, and the `newuname` hook is registered while either is on. The rewrite happens before the syscall returns to user space; a call whose work item cannot be allocated is left unspoofed.
 
 ---
 
