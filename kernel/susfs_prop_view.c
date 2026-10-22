@@ -22,6 +22,7 @@
 #include <linux/version.h>	/* LINUX_VERSION_CODE: mm->mmap vs the vma iterator (6.1) */
 #include <linux/fs.h>		/* struct file, filp_open, file_inode, i_size_read */
 #include <linux/fcntl.h>	/* O_RDONLY */
+#include <linux/file.h>		/* fput */
 #include <linux/namei.h>	/* kern_path */
 #include <linux/path.h>		/* path_put */
 #include <linux/dcache.h>	/* d_backing_inode */
