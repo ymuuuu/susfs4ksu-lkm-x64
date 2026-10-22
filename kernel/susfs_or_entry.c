@@ -204,6 +204,7 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	struct path path;
 	char target[SUSFS_OR_PATH_MAX];	/* filled by susfs_open_redirect_match_path() under rcu */
 	struct file *f;
+	bool exempt_taken;
 	int dfd = AT_FDCWD;
 	long res;
 	int fd;
@@ -420,7 +421,15 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	if (fd < 0)
 		return fd;
 
+	/* The target is opened in the caller's own process context, so sus_path would answer this
+	 * open ENOENT whenever the target itself is registered - the copy directory of NoEmulator's
+	 * property view is ("add /dev/.prop_view"), and measured on the device the app's getprop then
+	 * read dalvik.vm.heapsize as unset instead of 576m.  Only this one filp_open() is exempt,
+	 * per task and per call: the caller's own open/stat of the same path right after is still
+	 * answered ENOENT.  A full slot array returns false and the open runs as it did before. */
+	exempt_taken = susfs_sus_path_exempt_begin();
 	f = or_filp_open_fn(target, (int)(flags & ~O_CLOEXEC), (umode_t)mode);
+	susfs_sus_path_exempt_end(exempt_taken);
 	if (IS_ERR(f)) {
 		or_put_unused_fd((unsigned)fd);
 		return PTR_ERR(f);

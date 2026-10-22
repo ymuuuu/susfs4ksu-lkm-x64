@@ -55,6 +55,14 @@ int sus_path_add_self_hidden(const char *path);
  * reference); returns the number of rules removed, so 0 means "was not registered".  Process context only (iput). */
 int sus_path_del_path(const char *path);
 
+/* open_redirect's own open of a rule's target must not be answered by sus_path's hidden set: the copy it opens can be
+ * registered (NoEmulator's /dev/.prop_view is), and the redirect runs in the app's process context, so the hiding would
+ * turn the redirect into ENOENT for the app.  These bracket exactly that one filp_open(): begin claims a per-task slot
+ * (false when all slots are busy, in which case the open simply runs with the hiding in effect, as it did before) and the
+ * same answer has to be given back to end.  Per task and per call, never for anything else the task does. */
+bool susfs_sus_path_exempt_begin(void);
+void susfs_sus_path_exempt_end(bool taken);
+
 /* The two AArch32 listing numbers, and they live here rather than in sus_path.c because the
  * sys_call_table entries that drive the filter (susfs_kstat.c) have to name them as well: a
  * second copy of "141" in another file is a number nobody would notice drifting.  Native

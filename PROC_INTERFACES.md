@@ -235,6 +235,7 @@ sus_path 的规则表，写是命令：
 cat /proc/susfs_path
 # hide_from_apps=1  enoent: getattr=5 perm=0 nameop=0 meta=0
 # dirent: rewrite-fail=0  all-hidden=0  pending=0  calls(l64=2 compat=0)
+# exempt: full=0  (redirect opens that ran without the exemption)
 # identity: 3 hit(s) where the inode pointer did not match and (dev,ino) or (fs type,ino) answered instead
 # path=/proc/susfs_kstat  dev=20 ino=4026535246 name=susfs_kstat  [ours: clear/del refuse it]
 # path=/data/adb/xxx      dev=253 ino=1234567 name=xxx

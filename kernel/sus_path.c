@@ -306,6 +306,73 @@ static inline bool sus_path_is_resolver(void)
     return READ_ONCE(sus_path_resolver) == current;
 }
 
+/* ---- the redirect's own open exemption ----
+ * open_redirect's name layer answers an app's open of a hidden path with its own
+ * filp_open(<target>) (susfs_or_entry.c, around or_filp_open_fn), in that app's own process
+ * context, and sus_path then answers that open ENOENT too whenever the target is registered -
+ * which it is as soon as the copy directory is hidden ("add /dev/.prop_view").  Measured on the
+ * device: with that rule an app's getprop read dalvik.vm.heapsize as unset; without it, 576m.
+ * The resolver's single task (above) cannot carry this case: redirect opens run concurrently in
+ * many processes, and the window has to stay open for a whole filp_open(), which sleeps.  So a
+ * fixed array of slots is used instead - a task claims one with cmpxchg before the open and
+ * drops it with WRITE_ONCE(NULL) right after, and the lookup side only does READ_ONCE compares,
+ * so it takes no lock and never has to sleep.  Per task and per CALL on purpose: nothing else
+ * that task goes on to do is exempt, so the same process opening that copy itself, or stat-ing
+ * it, is still answered ENOENT.
+ * A full array is not a failure: that open runs WITHOUT the exemption and so behaves exactly as
+ * it did before, and n_exempt_full counts it - "some opens still lost the whole area" is then
+ * visible in the listing instead of silent.  32 slots: one per concurrent redirected open, and
+ * a burst of app spawns (each getprop is one) is what fills them.
+ */
+#define SUS_PATH_EXEMPT_SLOTS 32
+static struct task_struct *sus_path_exempt[SUS_PATH_EXEMPT_SLOTS];
+static atomic_t n_exempt_full = ATOMIC_INIT(0);
+
+/* Called right before the redirect's own filp_open() of its target path.  Returns whether a
+ * slot was taken; the answer MUST be given back to the end function below. */
+bool susfs_sus_path_exempt_begin(void)
+{
+    int i;
+
+    for (i = 0; i < SUS_PATH_EXEMPT_SLOTS; i++) {
+        if (!cmpxchg(&sus_path_exempt[i], NULL, current))
+            return true;
+    }
+    atomic_inc(&n_exempt_full);
+    return false;
+}
+
+/* Called right after that filp_open(), on every path. */
+void susfs_sus_path_exempt_end(bool taken)
+{
+    int i;
+
+    if (!taken)
+        return;
+    for (i = 0; i < SUS_PATH_EXEMPT_SLOTS; i++) {
+        if (READ_ONCE(sus_path_exempt[i]) == current) {
+            WRITE_ONCE(sus_path_exempt[i], NULL);
+            return;
+        }
+    }
+}
+
+/* The question both hiding layers below ask before they answer: true when current is the
+ * pending resolver or holds a redirect slot - i.e. when the walk being decided is one this
+ * module itself started. */
+static inline bool sus_path_is_exempt(void)
+{
+    int i;
+
+    if (sus_path_is_resolver())
+        return true;
+    for (i = 0; i < SUS_PATH_EXEMPT_SLOTS; i++) {
+        if (READ_ONCE(sus_path_exempt[i]) == current)
+            return true;
+    }
+    return false;
+}
+
 /* Upstream resolves its _LOOP list from a workqueue worker under
  * override_creds(ksu_cred) (susfs.c:139 ... revert_creds() at :171): a worker's creds are not the
  * ones the path should be visible to, and SELinux, DAC and our own gate can tell the difference.
@@ -487,9 +554,9 @@ static bool sus_path_is_hidden(u64 ino, const char *name)
     struct sus_path_entry *e;
     bool hidden = false;
 
-    /* The one resolving task is never answered "hidden": its own walk would be
-     * refused by this very table (see the block above sus_path_resolver). */
-    if (sus_path_is_resolver())
+    /* The one resolving task and a redirect's own open are never answered "hidden":
+     * their own walk would be refused by this very table (see the two blocks above). */
+    if (sus_path_is_exempt())
         return false;
 
     /* A dirent is identified by (d_ino, name) and nothing else here - the filter never sees the fd
@@ -1170,9 +1237,9 @@ static bool sus_path_inode_hidden(struct inode *inode)
     if (!inode || !READ_ONCE(sus_path_count))
         return false;
 
-    /* See sus_path_resolver: the resolving task must not be answered by its own table,
-     * or its walk of that very path is refused. */
-    if (sus_path_is_resolver())
+    /* See sus_path_is_exempt(): the resolver's walk, and the redirect's own open of its
+     * target, must not be answered by this table. */
+    if (sus_path_is_exempt())
         return false;
 
     dev = (u64)inode->i_sb->s_dev;
@@ -2264,6 +2331,12 @@ static int sus_path_format_list(char *buf, size_t size)
     n = sus_path_list_puts(buf, n, &trunc,
                    "dirent: pending=%d (counters: /proc/susfs_kstat)\n",
                    atomic_read(&sus_path_n_pending));
+    /* Opens of a redirect target that found no exemption slot and ran with the hiding in
+     * effect, i.e. answered ENOENT for an app that should have read the copy.  Printed
+     * always, so a zero says "the array was never full" instead of saying nothing. */
+    n = sus_path_list_puts(buf, n, &trunc,
+                   "exempt: full=%d  (redirect opens that ran without the exemption)\n",
+                   atomic_read(&n_exempt_full));
     if (n_lsm_ext_fail)
         n = sus_path_list_puts(buf, n, &trunc,
                        "lsm: %d secondary hook(s) FAILED (first: %s) - that operation is not covered\n",
