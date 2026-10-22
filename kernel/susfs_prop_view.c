@@ -265,11 +265,15 @@ out_free:
     return rc;
 }
 
-static void pv_clear(void)
+/* The probe stays registered: pv_enabled is what turns the swap off.  Measured on the AVD
+ * (android15-6.6): after clear unregistered it and the next add registered it again, the add
+ * logged "probe armed" but the handler never ran, and swapped stayed put until a reboot.
+ * The other layers register once at init and unregister only at exit; this one now does the
+ * same, arming on the first add and disarming in susfs_prop_view_exit(). */
+static void pv_clear_entries(void)
 {
     int i;
 
-    /* Held across the unregister too, so an add cannot arm the probe again in between. */
     mutex_lock(&pv_lock);
     WRITE_ONCE(pv_enabled, false);
     for (i = 0; i < pv_n; i++) {
@@ -277,7 +281,6 @@ static void pv_clear(void)
         put_cred(pv_entries[i].owner);
     }
     pv_n = 0;
-    pv_unregister();
     mutex_unlock(&pv_lock);
     SUSFS_LOGI("prop_view: cleared\n");
 }
@@ -483,7 +486,7 @@ static ssize_t pv_proc_write(struct file *file, const char __user *buf,
 
     argc = split_ws(cmd, argv, 4);
     if (argc == 1 && !strcmp(argv[0], "clear")) {
-        pv_clear();
+        pv_clear_entries();
         return len;
     }
     if (argc == 3 && !strcmp(argv[0], "add")) {
@@ -534,5 +537,6 @@ void susfs_prop_view_exit(void)
         proc_remove(pv_proc_entry);
         pv_proc_entry = NULL;
     }
-    pv_clear();
+    pv_clear_entries();
+    pv_unregister();
 }
