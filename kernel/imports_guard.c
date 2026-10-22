@@ -99,6 +99,11 @@ static const struct susfs_import susfs_imports[] = {
      * by-name lookups (its two companions fget_raw/close_fd_get_file are resolved at runtime
      * and therefore never appear here). */
     IMP(fput),
+    /* prop_view: opens the copy file at add time and maps it at swap time. */
+    IMP(filp_open),
+    IMP(vm_mmap),
+    IMP(override_creds),
+    IMP(revert_creds),
     IMP(task_work_add),
 #ifdef __aarch64__
     /* arm64's set_fixmap macro bottoms out in the global __set_fixmap. */

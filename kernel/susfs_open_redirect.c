@@ -260,6 +260,9 @@ static unsigned long or_app_ino[OR_APP_PROC_MAX];
 static dev_t or_app_dev[OR_APP_PROC_MAX];
 static int or_app_n;
 static bool or_app_resolved;
+/* Serialises the first resolution: the prop_view layer resolves on first use too, so two
+ * callers can arrive here at once. */
+static DEFINE_MUTEX(or_app_lock);
 
 static int or_resolve_app_procs(void)
 {
@@ -267,10 +270,14 @@ static int or_resolve_app_procs(void)
 		"/system/bin/app_process64",
 		"/system/bin/app_process32",
 	};
-	int i;
+	int i, n;
 
-	if (or_app_resolved)
-		return or_app_n;
+	mutex_lock(&or_app_lock);
+	if (or_app_resolved) {
+		n = or_app_n;
+		mutex_unlock(&or_app_lock);
+		return n;
+	}
 	for (i = 0; i < OR_APP_PROC_MAX; i++) {
 		struct path p;
 		struct inode *inode;
@@ -287,7 +294,9 @@ static int or_resolve_app_procs(void)
 	}
 	if (or_app_n)
 		or_app_resolved = true;
-	return or_app_n;
+	n = or_app_n;
+	mutex_unlock(&or_app_lock);
+	return n;
 }
 
 /* The app_only gate: the opening process's own executable is one of the app_process files above.  Identity is
@@ -316,6 +325,17 @@ static bool or_is_app_process(void)
 	}
 	fput(exe);
 	return hit;
+}
+
+/* The same app_process question, for the prop_view layer: resolve on first use, then compare
+ * current's exe against the resolved inodes.  The app_only rules keep using the path above. */
+bool susfs_current_exe_is_app_process(void)
+{
+	if (!or_get_mm_exe_file_fn)
+		return false;
+	if (!or_resolve_app_procs())
+		return false;
+	return or_is_app_process();
 }
 
 static struct sus_or_entry *or_find_by_path(const char *target)

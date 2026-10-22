@@ -110,6 +110,10 @@ bool susfs_hide_modules_node_ready(void);
  * (translated arm64 code).  Root-only, ENOENT for everyone else through sus_path. */
 #define SUSFS_UNAME_MACHINE_NODE "/proc/susfs_uname_machine"
 
+/* The per-app property view node (SPIKE): add/clear the real area to copy file pairs.
+ * Root-only, ENOENT for everyone else through sus_path. */
+#define SUSFS_PROP_VIEW_NODE "/proc/susfs_prop_view"
+
 /* Whether the /proc/susfs_* control nodes are created at all.  Defaults to TRUE; they are created only when the LSM layer
  * that hides them is installed, so nobody ends up with an unprotected control node, and expose_proc=0 removes them. */
 extern bool susfs_expose_proc;
@@ -117,6 +121,9 @@ extern bool susfs_expose_proc;
 /* feature init/exit (each feature is its own translation unit) */
 int susfs_uname_init(void);
 void susfs_uname_exit(void);
+
+int susfs_prop_view_init(void);
+void susfs_prop_view_exit(void);
 
 int susfs_kstat_init(void);
 void susfs_kstat_exit(void);
@@ -135,6 +142,10 @@ void susfs_spoof_cmdline_exit(void);
 
 int susfs_open_redirect_init(void);
 void susfs_open_redirect_exit(void);
+
+/* True when current's executable is app_process64 or app_process32, using the same resolved
+ * inodes as the app_only rules.  Used by the prop_view layer. */
+bool susfs_current_exe_is_app_process(void);
 
 int susfs_enable_log_init(void);
 void susfs_enable_log_exit(void);

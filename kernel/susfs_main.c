@@ -66,6 +66,8 @@ static const char *const susfs_self_hide_paths[] = {
     SUSFS_PATH_NODE,
     /* The uname machine spoof node: it decides "translated process" from the marker VMA. */
     SUSFS_UNAME_MACHINE_NODE,
+    /* The prop_view node: add/clear the property area copy pairs. */
+    SUSFS_PROP_VIEW_NODE,
     /* The O_PATH layer's node: it reports the four sys_call_table/compat_sys_call_table
      * entries and the counters that say whether a wrapper ever ran. */
     SUSFS_OPATH_NODE,
@@ -269,6 +271,7 @@ enum susfs_layer_id {
     SUSFS_L_SUS_MOUNT,
     SUSFS_L_CMDLINE,
     SUSFS_L_OPEN_REDIRECT,
+    SUSFS_L_PROP_VIEW,
     SUSFS_L_ENABLE_LOG,
     SUSFS_L_AVC_SPOOF,
     SUSFS_L_SUPERCALL,
@@ -322,6 +325,9 @@ static struct susfs_layer {
     { "sus_mount",	susfs_sus_mount_init,		susfs_sus_mount_exit,	false, SUSFS_FEAT_SUS_MOUNT },
     { "cmdline",	susfs_spoof_cmdline_init,	susfs_spoof_cmdline_exit, false, SUSFS_FEAT_SPOOF_CMDLINE },
     { "open_redirect",	susfs_open_redirect_init,	susfs_open_redirect_exit, false, SUSFS_FEAT_OPEN_REDIRECT },
+    /* After open_redirect: its app_process helper is what tells this layer's work callback
+     * that the caller is an app process.  NOT fatal: it is a test feature. */
+    { "prop_view",	susfs_prop_view_init,		susfs_prop_view_exit,	false, -1 },
     { "enable_log",	susfs_enable_log_init,		susfs_enable_log_exit,	false, SUSFS_FEAT_ENABLE_LOG },
     { "avc_spoof",	susfs_avc_spoof_init,		susfs_avc_spoof_exit,	false, SUSFS_FEAT_AVC_SPOOF },
     { "supercall",	susfs_supercall_init,		susfs_supercall_exit,	false, -1 },
@@ -337,7 +343,8 @@ static struct susfs_layer {
  * comments in sync whenever a layer is inserted):
  *   1 fp_hook   2 ksu_umount_gate  3 ksu_allow_gate  4 lsm_hook   5 sus_path
  *   6 create_gate  7 opath  8 dirent  9 uname  10 kstat  11 sus_map  12 sus_mount
- *   13 cmdline  14 open_redirect  15 enable_log  16 avc_spoof  17 supercall  18 hide_syms
+ *   13 cmdline  14 open_redirect  15 prop_view  16 enable_log  17 avc_spoof  18 supercall
+ *   19 hide_syms
  */
 static int fail_layer;
 module_param_named(fail_layer, fail_layer, int, 0644);
@@ -379,6 +386,7 @@ static const struct {
     { SUSFS_L_SUS_MOUNT, false },
     { SUSFS_L_CMDLINE, false },
     { SUSFS_L_OPEN_REDIRECT, false },
+    { SUSFS_L_PROP_VIEW, false },
     { SUSFS_L_ENABLE_LOG, false },
     { SUSFS_L_AVC_SPOOF, false },
     { SUSFS_L_SUPERCALL, true },
