@@ -58,6 +58,7 @@
 #include <linux/err.h>
 #include <linux/atomic.h>
 #include <linux/limits.h>
+#include <linux/slab.h>		/* kfree: keep_ident's name, on the paths that list no file */
 #include "susfs.h"
 #include "susfs_log.h"
 #include "symbol_resolver.h"
@@ -209,6 +210,7 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	bool keep_ident = false;
 	unsigned long src_ino;
 	dev_t src_dev;
+	char *src_name = NULL;
 	int dfd = AT_FDCWD;
 	long res;
 	int fd;
@@ -401,11 +403,16 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	 * matched on and stat() on the path shows. */
 	src_ino = d_inode(path.dentry)->i_ino;
 	src_dev = d_inode(path.dentry)->i_sb->s_dev;
+	/* And the name readlink of the fd would have shown: the file the caller's own open resolved to. */
+	if (keep_ident)
+		src_name = susfs_or_ident_path_name(&path);
 	path_put(&path);	/* no reference is kept anywhere: the rule owns none either */
 	/* Defensive: an empty name is not a path, and filp_open("") resolves to the caller's own
 	 * working directory, i.e. it would hand out an unrelated fd. */
-	if (!target[0])
+	if (!target[0]) {
+		kfree(src_name);
 		return SUSFS_OR_ENTRY_PASS;
+	}
 
 	/* arm64 always opens with O_LARGEFILE (force_o_largefile() is `!IS_ENABLED(CONFIG_ARCH_32BIT_OFF_T)`,
 	 * and the syscall adds it before anything else looks at the flags).  Without it the fd we hand
@@ -426,8 +433,10 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	 * an EMFILE/ENFILE open then touches nothing at all, where opening first would have created or
 	 * truncated the rule's target and then failed anyway. */
 	fd = or_get_unused_fd_flags_fn(fd_cloexec);
-	if (fd < 0)
+	if (fd < 0) {
+		kfree(src_name);
 		return fd;
+	}
 
 	/* The target is opened in the caller's own process context, so sus_path would answer this
 	 * open ENOENT whenever the target itself is registered - the copy directory of NoEmulator's
@@ -440,6 +449,7 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	susfs_sus_path_exempt_end(exempt_taken);
 	if (IS_ERR(f)) {
 		or_put_unused_fd((unsigned)fd);
+		kfree(src_name);
 		return PTR_ERR(f);
 	}
 
@@ -457,7 +467,7 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 #endif
 	/* Listed before the fd is visible, so no stat on it can see the redirected identity first. */
 	if (keep_ident)
-		susfs_or_ident_track(f, src_ino, src_dev);
+		susfs_or_ident_track(f, src_ino, src_dev, src_name);
 	or_fd_install_fn((unsigned)fd, f);
 
 	atomic_inc(&or_entry_hits);

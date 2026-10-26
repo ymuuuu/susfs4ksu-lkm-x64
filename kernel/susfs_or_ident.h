@@ -5,22 +5,32 @@
 #include <linux/types.h>
 
 struct file;
+struct path;
 struct seq_file;
 
 /* keep_ident (this port only): the files a keep_ident open_redirect rule served, each with the
- * identity of the file the caller asked for.  The stat layer asks this table about the file behind
- * an fd and reports that identity (st_dev, st_ino) instead of the redirected file's.
+ * identity and name of the file the caller asked for.  The stat layer asks this table about the
+ * file behind an fd and reports that identity (st_dev, st_ino) instead of the redirected file's,
+ * and that name for readlink of the caller's own /proc fd link.
  *
  * Every listed file is held by a reference of the table's own, so its address cannot be reused by
  * another open while it is listed.  An entry is dropped when the table finds it is the file's only
  * holder left (checked on every track), or when its rule goes away. */
 
+/* What readlink of a fd on `path` shows: its d_path(), kmalloc'd, or NULL.  May sleep. */
+char *susfs_or_ident_path_name(const struct path *path);
+
 /* Called by the name-layer hook for a file it just opened for a keep_ident rule, before the fd is
- * installed.  A full table leaves that file unlisted (counted as "full"). */
-void susfs_or_ident_track(struct file *file, unsigned long ino, dev_t dev);
+ * installed.  Takes ownership of `name` (from susfs_or_ident_path_name(), may be NULL).  A full
+ * table leaves that file unlisted (counted as "full"). */
+void susfs_or_ident_track(struct file *file, unsigned long ino, dev_t dev, char *name);
 
 /* The original identity of a listed file; false when the file is not listed. */
 bool susfs_or_ident_lookup(const struct file *file, unsigned long *ino, dev_t *dev);
+
+/* The original's name of a listed file copied into buf, and its length; -1 when the file is not
+ * listed, has no name, or the name does not fit. */
+int susfs_or_ident_name(const struct file *file, char *buf, size_t len);
 
 /* Drop the entries served for one rule target (rule deleted or replaced), or all of them. */
 void susfs_or_ident_forget(unsigned long ino, dev_t dev);

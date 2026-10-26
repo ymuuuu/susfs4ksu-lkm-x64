@@ -4,8 +4,9 @@
  *
  * A redirected open hands the caller the redirected file, so fstat() on that fd reports the redirected file's
  * st_dev/st_ino while stat() on the path reports the original's.  A keep_ident rule records every file it served
- * here, with the original's (ino, dev), and the stat layer (susfs_kstat.c) rewrites those two fields for a call
- * whose file is listed.  Other opens of the redirected file are never listed, so they keep their own identity.
+ * here, with the original's (ino, dev) and name, and the stat layer (susfs_kstat.c) rewrites those two fields for a
+ * call whose file is listed, and readlink of the caller's own /proc fd link to that name.  Other opens of the
+ * redirected file are never listed, so they keep their own identity.
  *
  * Lifetime: struct file is recycled right after its last reference goes, so an address alone cannot tell a served
  * file from a later open of the same file.  The table therefore takes a reference of its own on every listed file:
@@ -14,7 +15,7 @@
  * and the IN_CLOSE_NOWRITE it sends, therefore comes later than the close() that ended the caller's use of it.
  *
  * Process context only: tracked from the name-layer hook, read from the stat layer's table entries, changed from
- * the rule-management paths.  fput() never sleeps, so it is called under the lock.
+ * the rule-management paths.  fput() and kfree() never sleep, so they are called under the lock.
  */
 #include <linux/kernel.h>
 #include <linux/fs.h>
@@ -22,6 +23,8 @@
 #include <linux/spinlock.h>
 #include <linux/atomic.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
+#include <linux/dcache.h>
 #include "susfs_or_ident.h"
 
 /* Live served files at the same time, not opens ever made: an entry goes once nothing but the table holds it. */
@@ -31,6 +34,7 @@ struct or_ident {
 	struct file *file;	/* holds a reference */
 	unsigned long ino;	/* the original's identity, as stat() on its path reports it */
 	dev_t dev;
+	char *name;		/* kmalloc'd d_path() of the original, NULL when that failed */
 };
 
 static struct or_ident or_idents[OR_IDENT_MAX];
@@ -45,6 +49,7 @@ static atomic_t or_ident_hits = ATOMIC_INIT(0);
 static void or_ident_drop(unsigned int i)
 {
 	fput(or_idents[i].file);
+	kfree(or_idents[i].name);
 	or_idents[i] = or_idents[n_idents - 1];
 	WRITE_ONCE(n_idents, n_idents - 1);
 }
@@ -63,18 +68,34 @@ static void or_ident_prune(void)
 	}
 }
 
-void susfs_or_ident_track(struct file *file, unsigned long ino, dev_t dev)
+char *susfs_or_ident_path_name(const struct path *path)
+{
+	char *page = kmalloc(PATH_MAX, GFP_KERNEL);
+	char *name = NULL, *p;
+
+	if (!page)
+		return NULL;
+	p = d_path(path, page, PATH_MAX);
+	if (!IS_ERR(p))
+		name = kstrdup(p, GFP_KERNEL);
+	kfree(page);
+	return name;
+}
+
+void susfs_or_ident_track(struct file *file, unsigned long ino, dev_t dev, char *name)
 {
 	spin_lock(&or_ident_lock);
 	or_ident_prune();
 	if (n_idents == OR_IDENT_MAX) {
 		spin_unlock(&or_ident_lock);
+		kfree(name);
 		atomic_inc(&or_ident_full);
 		return;
 	}
 	or_idents[n_idents].file = get_file(file);
 	or_idents[n_idents].ino = ino;
 	or_idents[n_idents].dev = dev;
+	or_idents[n_idents].name = name;
 	WRITE_ONCE(n_idents, n_idents + 1);
 	spin_unlock(&or_ident_lock);
 	atomic_inc(&or_ident_tracked);
@@ -98,6 +119,26 @@ bool susfs_or_ident_lookup(const struct file *file, unsigned long *ino, dev_t *d
 	if (found)
 		atomic_inc(&or_ident_hits);
 	return found;
+}
+
+int susfs_or_ident_name(const struct file *file, char *buf, size_t len)
+{
+	int ret = -1;
+	unsigned int i;
+
+	spin_lock(&or_ident_lock);
+	for (i = 0; i < n_idents; i++) {
+		if (or_idents[i].file == file) {
+			if (or_idents[i].name)
+				ret = (int)strscpy(buf, or_idents[i].name, len);
+			break;
+		}
+	}
+	spin_unlock(&or_ident_lock);
+	if (ret < 0)
+		return -1;
+	atomic_inc(&or_ident_hits);
+	return ret;
 }
 
 void susfs_or_ident_forget(unsigned long ino, dev_t dev)

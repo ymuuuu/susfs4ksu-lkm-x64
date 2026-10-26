@@ -52,6 +52,7 @@
 #include <linux/version.h>	/* LINUX_VERSION_CODE: the inode ctime accessor */
 #include <linux/fcntl.h>	/* AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW: keep_ident's fd forms */
 #include <linux/file.h>		/* fput: keep_ident looks at the file behind the fd */
+#include <linux/slab.h>		/* kmalloc: keep_ident's readlink buffers */
 #include <linux/sched.h>	/* task_tgid_vnr/task_pid_vnr: the caller's own /proc names */
 #include "susfs_abi.h"
 #include "susfs_log.h"
@@ -1401,17 +1402,19 @@ static bool susfs_kstat_spoof_statx(struct kstat_call_state *st, unsigned long s
  *   fstat(fd)                                       the fd
  *   newfstatat/statx(fd, "", AT_EMPTY_PATH)         the fd (a NULL name too, which 6.11 and later accept)
  *   newfstatat/statx(any, "/proc/<own>/fd/N", 0)    the caller's fd N, when the link was followed
+ *   readlinkat(any, "/proc/<own>/fd/N")             the caller's fd N: the link names the original
  * <own> is self, thread-self, the caller's tgid, or self or the tgid followed by /task/<the caller's tid>.
- * The /proc form is rewritten only when the call returned that file's real identity, so a /proc mounted
- * elsewhere or for another pid namespace leaves the answer alone.
+ * The /proc form is rewritten only when the call returned that file's real identity (or name), so a /proc
+ * mounted elsewhere or for another pid namespace leaves the answer alone.
  *
  * The fd is taken with fget_raw(), not fget(): fget() refuses FMODE_PATH files (see the note in
  * susfs_opath_post_fd()), so an O_PATH fd, which is how a detector opens a library to compare it, would
  * never reach the table.  Resolved by name for the reason susfs_opath.c gives; unresolved, keep_ident's
- * stat rewrite stays off. */
+ * stat and readlink rewrites stay off. */
 
 static atomic_t n_kstat_ident_rewrites = ATOMIC_INIT(0);
 static atomic_t n_kstat_ident_uaccess = ATOMIC_INIT(0);
+static atomic_t n_kstat_ident_links = ATOMIC_INIT(0);
 static struct file *(*kstat_fget_raw)(unsigned int fd);
 
 /* The decimal number at *p, moving *p past it; -1 when there is none or it does not fit an int. */
@@ -1563,6 +1566,64 @@ static void kstat_keep_ident(long nr, const unsigned long *args, unsigned long b
 	fput(f);
 	if (listed)
 		kstat_ident_write(nr, buf, ino, dev);
+}
+
+/* The link the call returned (ret bytes at buf) against what the kernel says for f.  readlink cuts the
+ * name to bufsiz, so a short buffer holds the first ret bytes of it. */
+static bool kstat_link_returned(const struct file *f, unsigned long buf, long ret, int bufsiz)
+{
+	char *page = kmalloc(2 * PATH_MAX, GFP_KERNEL);
+	char *real;
+	bool same = false;
+
+	if (!page)
+		return false;
+	/* The returned bytes go to the first half, d_path() renders into the second. */
+	real = d_path(&f->f_path, page + PATH_MAX, PATH_MAX);
+	if (!IS_ERR(real) && ret == (long)min_t(size_t, strlen(real), (size_t)bufsiz) &&
+	    !copy_from_user(page, (const void __user *)buf, ret))
+		same = !memcmp(page, real, ret);
+	kfree(page);
+	return same;
+}
+
+/* readlinkat(dfd, name, buf, bufsiz) returned ret >= 0: for the caller's own fd link of a listed file
+ * the answer becomes the original's name, cut to bufsiz the way readlink cuts it. */
+static __nocfi long kstat_keep_ident_link(const unsigned long *args, long ret)
+{
+	const char __user *uname = (const char __user *)args[1];
+	int bufsiz = (int)args[3];
+	char name[48];
+	char *orig;
+	struct file *f;
+	long n;
+	int fd, len;
+
+	if (!kstat_fget_raw || !uname)
+		return ret;
+	n = strncpy_from_user(name, uname, sizeof(name));
+	if (n <= 0 || n == sizeof(name))
+		return ret;
+	fd = kstat_own_proc_fd(name);
+	if (fd < 0)
+		return ret;
+	f = kstat_fget_raw(fd);
+	if (!f)
+		return ret;
+	orig = kmalloc(PATH_MAX, GFP_KERNEL);
+	len = orig ? susfs_or_ident_name(f, orig, PATH_MAX) : -1;
+	if (len >= 0 && kstat_link_returned(f, args[2], ret, bufsiz)) {
+		n = min(len, bufsiz);
+		if (copy_to_user((void __user *)args[2], orig, n)) {
+			atomic_inc(&n_kstat_ident_uaccess);
+		} else {
+			atomic_inc(&n_kstat_ident_links);
+			ret = n;
+		}
+	}
+	kfree(orig);
+	fput(f);
+	return ret;
 }
 
 /* The post-check, called at the TAIL of the table-entry wrapper (see kstat_hooks[] below) instead
@@ -1817,6 +1878,7 @@ static susfs_syscall_fn_t kstat_orig_nfstatat;
 static susfs_syscall_fn_t kstat_orig_fstat;
 static susfs_syscall_fn_t kstat_orig_statx;
 static susfs_syscall_fn_t kstat_orig_getdents64;
+static susfs_syscall_fn_t kstat_orig_readlinkat;
 #ifdef __aarch64__
 static susfs_syscall_fn_t kstat_orig_compat_stat64;
 static susfs_syscall_fn_t kstat_orig_compat_lstat64;
@@ -1872,6 +1934,23 @@ static __nocfi long kstat_wrap_getdents64(const struct pt_regs *regs)
 	out = ret;
 	susfs_kstat_post(__NR_getdents64, false, a, ret, &out);
 	return out;
+}
+
+/* readlinkat does NOT use the shared macro either: its one job is keep_ident's fd link, and its answer
+ * is a length, which the stat post-check does not produce. */
+static __nocfi long kstat_wrap_readlinkat(const struct pt_regs *regs)
+{
+	susfs_syscall_fn_t orig = READ_ONCE(kstat_orig_readlinkat);
+	unsigned long a[6];
+	long ret;
+
+	if (!orig)
+		return -ENOSYS;
+	syscall_get_arguments(current, (struct pt_regs *)regs, a);
+	ret = orig(regs);
+	if (ret >= 0 && susfs_or_ident_active())
+		ret = kstat_keep_ident_link(a, ret);
+	return ret;
 }
 
 #ifdef __aarch64__
@@ -1933,6 +2012,9 @@ static struct susfs_fp_hook kstat_hooks[] = {
 	{ .nr = __NR_getdents64, .nr_compat = 0, .name = "kstat/getdents64",
 	  .sym = SUSFS_SC_WRAPPER_NAME(getdents64),
 	  .wrapper = kstat_wrap_getdents64, .orig_slot = &kstat_orig_getdents64 },
+	{ .nr = __NR_readlinkat, .nr_compat = 0, .name = "kstat/readlinkat",
+	  .sym = SUSFS_SC_WRAPPER_NAME(readlinkat),
+	  .wrapper = kstat_wrap_readlinkat, .orig_slot = &kstat_orig_readlinkat },
 
 #ifdef __aarch64__
 	/* The AArch32 half.  nr stays -1 for every one of them. */
@@ -2316,7 +2398,7 @@ int susfs_kstat_init(void)
 
 	kstat_fget_raw = (void *)find_kernel_symbol_exact("fget_raw");
 	if (!kstat_fget_raw)
-		pr_warn("kstat: fget_raw not resolved - keep_ident's stat rewrite stays off\n");
+		pr_warn("kstat: fget_raw not resolved - keep_ident's stat and readlink rewrites stay off\n");
 
 	/* The entries are armed UNCONDITIONALLY, and that is not cosmetic: the supercall interface
 	 * (CMD_SUSFS_ADD_SUS_KSTAT) can install rules with no /proc node at all, so skipping
@@ -2455,8 +2537,9 @@ static int kstat_proc_show(struct seq_file *m, void *v)
 			   kstat_unlisted_seen[4], kstat_unlisted_seen[5],
 			   kstat_unlisted_seen[6], kstat_unlisted_seen[7]);
 	}
-	seq_printf(m, "keep_ident: rw=%d uacc=%d\n",
-		   atomic_read(&n_kstat_ident_rewrites), atomic_read(&n_kstat_ident_uaccess));
+	seq_printf(m, "keep_ident: rw=%d uacc=%d link=%d\n",
+		   atomic_read(&n_kstat_ident_rewrites), atomic_read(&n_kstat_ident_uaccess),
+		   atomic_read(&n_kstat_ident_links));
 
 	{
 		char line[512];
