@@ -34,7 +34,8 @@
  * /proc/susfs_open_redirect, because registering only proves the symbol exists - this feature has hit that wall twice
  * (show_vma_header_prefix, then __d_path: both registered, both stayed at 0).
  *
- * /proc/susfs_open_redirect: add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] [app_only] | del <target> | clear
+ * /proc/susfs_open_redirect: add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] [app_only] [keep_ident]
+ *                            | del <target> | clear
  */
 #include <linux/module.h>
 #include <linux/kprobes.h>
@@ -62,11 +63,17 @@
 #include "ksu_allow_gate.h"	/* the control-node gate is su's own */
 #include "susfs_kprobe.h"
 #include "susfs_or_entry.h"	/* susfs_or_entry_armed(): the forward direction lives there now */
+#include "susfs_or_ident.h"	/* keep_ident: a rule's served files go when the rule does */
 
 #define SUS_OR_MAX 64
 /* The ABI fields are char[256]; matching that width stops a legal long path from being truncated into a rule for a
  * different path. */
 #define OR_PATH_MAX 256
+
+/* or_add()'s per-rule flags.  All three are fork-only and /proc only: the supercall struct has no room for them. */
+#define OR_FLAG_NO_REVERSE	0x1
+#define OR_FLAG_APP_ONLY	0x2
+#define OR_FLAG_KEEP_IDENT	0x4
 
 /* UID_SCHEME lives in susfs_abi.h, mirroring upstream susfs.h, where the enum sits next to the ABI structs. */
 
@@ -153,6 +160,9 @@ struct sus_or_entry {
 	 * app_process32 (see or_is_app_process()).  An exec'd child has a different exe, so a rule can spare the
 	 * app's own opens without hitting the programs the app starts.  /proc only, like no_reverse. */
 	bool app_only;
+	/* Fork-only, forward only: a file this rule served reports the target's st_dev and st_ino to the stat family
+	 * (susfs_or_ident.c), so fstat() on the fd agrees with stat() on the path.  /proc only, like no_reverse. */
+	bool keep_ident;
 	/* Set while the slot is being rewritten or has been deleted.  The reader checks this with
 	 * READ_ONCE and the writer clears it LAST, so false means the rest of the entry is complete. */
 	bool dead;
@@ -378,7 +388,8 @@ static struct sus_or_entry *or_find_by_inode(unsigned long ino, dev_t dev, unsig
  * counts as "no rule" - the caller then runs the original syscall, which is always correct.
  * The table read is lockless for the same reason the probes' is: `dead` is cleared LAST by the
  * writer, so a non-dead entry has complete fields. */
-bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t buflen)
+bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t buflen,
+				    bool *keep_ident)
 {
 	struct inode *inode;
 	struct sus_or_entry *e;
@@ -396,6 +407,7 @@ bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t b
 	if (e && or_uid_matches(e->uid_scheme) && e->redirected_pathname[0] &&
 	    strscpy(buf, e->redirected_pathname, buflen) >= 0) {
 		app_only = e->app_only;
+		*keep_ident = e->keep_ident;
 		hit = true;
 	}
 	rcu_read_unlock();
@@ -1153,6 +1165,7 @@ void susfs_open_redirect_exit(void)
 	 * entry's cached struct path. */
 	for (i = 0; i < READ_ONCE(nor); i++)
 		or_entries[i].dead = true;
+	susfs_or_ident_clear();
 	nor = 0;
 	or_free_n = 0;		/* nothing is left to hand out: every slot is dead again */
 	WRITE_ONCE(susfs_open_redirect_rules, 0);	/* the count the name layer reads; hook is already gone */
@@ -1169,12 +1182,13 @@ static int or_proc_show(struct seq_file *m, void *v)
 		for (i = 0; i < READ_ONCE(nor); i++) {
 			if (READ_ONCE(or_entries[i].dead))
 				continue;
-			seq_printf(m, "%s -> %s uid=%d%s%s (ino=%lu dev=%lu mnt=%lu | rev: ino=%lu dev=%lu)\n",
+			seq_printf(m, "%s -> %s uid=%d%s%s%s (ino=%lu dev=%lu mnt=%lu | rev: ino=%lu dev=%lu)\n",
 				   or_entries[i].target_pathname,
 				   or_entries[i].redirected_pathname,
 				   or_entries[i].uid_scheme,
 				   or_entries[i].no_reverse ? " no_reverse" : "",
 				   or_entries[i].app_only ? " app_only" : "",
+				   or_entries[i].keep_ident ? " keep_ident" : "",
 				   or_entries[i].target_ino,
 				   (unsigned long)or_entries[i].target_dev,
 				   or_entries[i].target_mnt_id,
@@ -1196,6 +1210,7 @@ static int or_proc_show(struct seq_file *m, void *v)
 		   atomic_read(&or_rev_fdinfo_hits),
 		   atomic_read(&or_rev_fdinfo_rewrites),
 		   or_su_sid);
+	susfs_or_ident_show(m);
 	mutex_unlock(&or_lock);
 	return 0;
 }
@@ -1230,9 +1245,9 @@ static int split_ws(char *buf, char **argv, int max)
 
 static void or_reclaim_slot(struct sus_or_entry *e);
 
-static int or_add(const char *target, const char *redirected, int scheme, bool no_reverse,
-		  bool app_only)
+static int or_add(const char *target, const char *redirected, int scheme, unsigned int flags)
 {
+	bool app_only = flags & OR_FLAG_APP_ONLY;
 	struct sus_or_entry *e;
 	struct path tp, rp;
 	struct inode *ti, *ri;
@@ -1348,7 +1363,10 @@ static int or_add(const char *target, const char *redirected, int scheme, bool n
 	if (e) {
 		/* Rewriting a rule: take the old slot back (grace period included), which is also what makes
 		 * the new entry possible even with every slot in use.  The live count does not change (one
-		 * rule out, one in below), so it is only touched in the branch that adds a rule. */
+		 * rule out, one in below), so it is only touched in the branch that adds a rule.
+		 * A re-add that keeps keep_ident keeps the files already served; one without it ends their spoof. */
+		if (!(flags & OR_FLAG_KEEP_IDENT))
+			susfs_or_ident_forget(e->target_ino, e->target_dev);
 		or_reclaim_slot(e);
 		e = NULL;
 	} else {
@@ -1384,8 +1402,9 @@ static int or_add(const char *target, const char *redirected, int scheme, bool n
 	e->redirected_igen = ri->i_generation;
 	e->spoofed_kstatfs = spoofed_kstatfs;
 	e->uid_scheme = scheme;
-	e->no_reverse = no_reverse;
+	e->no_reverse = flags & OR_FLAG_NO_REVERSE;
 	e->app_only = app_only;
+	e->keep_ident = flags & OR_FLAG_KEEP_IDENT;
 	smp_wmb();
 	WRITE_ONCE(e->dead, false);	/* publish last: readers key off this */
 
@@ -1469,6 +1488,7 @@ static void or_clear_all(void)
 	 * every rule is already dead at this point - a lookup during the grace period would only resolve a
 	 * name to find nothing. */
 	WRITE_ONCE(susfs_open_redirect_rules, 0);
+	susfs_or_ident_clear();
 
 	if (marked) {
 		smp_wmb();
@@ -1489,6 +1509,7 @@ static void or_del(const char *target)
 	e = or_find_by_path(target);
 	if (!e || READ_ONCE(e->dead))
 		return;
+	susfs_or_ident_forget(e->target_ino, e->target_dev);
 
 	/* The slot goes back to the free list after a grace period, so the fields may be cleared and the
 	 * slot handed out again - the pointers this used to leave behind are gone (see or_reclaim_slot()),
@@ -1529,24 +1550,30 @@ static ssize_t or_proc_write(struct file *file, const char __user *buf,
 	mutex_lock(&or_lock);
 	err = -EINVAL;
 
-	/* Tokens 5 and 6 are checked before or_add() runs, so a rejected write registers nothing.  Both flags are
+	/* Tokens 5 to 7 are checked before or_add() runs, so a rejected write registers nothing.  The flags are
 	 * optional, in any order, each at most once; anything else is -EINVAL. */
-	if (!strcmp(argv[0], "add_open_redirect") && argc >= 4 && argc <= 6) {
-		bool no_reverse = false, app_only = false, flags_ok = true;
+	if (!strcmp(argv[0], "add_open_redirect") && argc >= 4 && argc <= 7) {
+		unsigned int flags = 0, bit;
+		bool flags_ok = true;
 		int i;
 
 		for (i = 4; i < argc; i++) {
-			if (!strcmp(argv[i], "no_reverse") && !no_reverse)
-				no_reverse = true;
-			else if (!strcmp(argv[i], "app_only") && !app_only)
-				app_only = true;
+			if (!strcmp(argv[i], "no_reverse"))
+				bit = OR_FLAG_NO_REVERSE;
+			else if (!strcmp(argv[i], "app_only"))
+				bit = OR_FLAG_APP_ONLY;
+			else if (!strcmp(argv[i], "keep_ident"))
+				bit = OR_FLAG_KEEP_IDENT;
 			else
+				bit = 0;
+			if (!bit || (flags & bit))
 				flags_ok = false;
+			flags |= bit;
 		}
 		if (!flags_ok || kstrtol(argv[3], 10, &scheme))
 			err = -EINVAL;
 		else
-			err = or_add(argv[1], argv[2], (int)scheme, no_reverse, app_only);
+			err = or_add(argv[1], argv[2], (int)scheme, flags);
 	} else if (!strcmp(argv[0], "del") && argc == 2) {
 		or_del(argv[1]);
 		err = 0;
@@ -1581,7 +1608,7 @@ void susfs_open_redirect_supercall(void __user **arg)
 
 	mutex_lock(&or_lock);
 	err = or_add(info.target_pathname, info.redirected_pathname,
-		     info.uid_scheme, false, false);
+		     info.uid_scheme, 0);
 	mutex_unlock(&or_lock);
 	info.err = err;
 out:

@@ -63,6 +63,7 @@
 #include "symbol_resolver.h"
 #include "susfs_kprobe.h"	/* susfs_sc_arg */
 #include "susfs_or_entry.h"
+#include "susfs_or_ident.h"	/* keep_ident: list the file this redirect serves */
 
 /* include/uapi/linux/openat2.h: three u64 fields, identical on both ABIs we build for. */
 struct susfs_open_how {
@@ -205,6 +206,9 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 	char target[SUSFS_OR_PATH_MAX];	/* filled by susfs_open_redirect_match_path() under rcu */
 	struct file *f;
 	bool exempt_taken;
+	bool keep_ident = false;
+	unsigned long src_ino;
+	dev_t src_dev;
 	int dfd = AT_FDCWD;
 	long res;
 	int fd;
@@ -389,10 +393,14 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 
 	/* The target name is copied out of the rule while the lookup holds rcu_read_lock (rule slots are
 	 * recycled after a grace period, so nothing inside an entry may be used after this call). */
-	if (!susfs_open_redirect_match_path(&path, target, sizeof(target))) {
+	if (!susfs_open_redirect_match_path(&path, target, sizeof(target), &keep_ident)) {
 		path_put(&path);
 		return SUSFS_OR_ENTRY_PASS;
 	}
+	/* The identity a keep_ident file reports: the inode the caller asked for, the same numbers the rule
+	 * matched on and stat() on the path shows. */
+	src_ino = d_inode(path.dentry)->i_ino;
+	src_dev = d_inode(path.dentry)->i_sb->s_dev;
 	path_put(&path);	/* no reference is kept anywhere: the rule owns none either */
 	/* Defensive: an empty name is not a path, and filp_open("") resolves to the caller's own
 	 * working directory, i.e. it would hand out an unrelated fd. */
@@ -447,6 +455,9 @@ static __nocfi noinline long or_entry_redirect(const struct pt_regs *regs, int k
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
 	or_fsnotify_open(f);
 #endif
+	/* Listed before the fd is visible, so no stat on it can see the redirected identity first. */
+	if (keep_ident)
+		susfs_or_ident_track(f, src_ino, src_dev);
 	or_fd_install_fn((unsigned)fd, f);
 
 	atomic_inc(&or_entry_hits);

@@ -50,6 +50,9 @@
 #include <linux/string.h>
 #include <linux/cred.h>
 #include <linux/version.h>	/* LINUX_VERSION_CODE: the inode ctime accessor */
+#include <linux/fcntl.h>	/* AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW: keep_ident's fd forms */
+#include <linux/file.h>		/* fget/fput: keep_ident looks at the file behind the fd */
+#include <linux/sched.h>	/* task_tgid_vnr/task_pid_vnr: the caller's own /proc names */
 #include "susfs_abi.h"
 #include "susfs_log.h"
 #include "susfs.h"	/* susfs_expose_proc, sus_path_dirent_filter(), SUS_NR_GETDENTS*_COMPAT */
@@ -57,6 +60,7 @@
 #include "ksu_umount_gate.h"	/* susfs_is_current_proc_umounted_app (issue #34) */
 #include "ksu_allow_gate.h"	/* the control-node gate is su's own */
 #include "susfs_kprobe.h"
+#include "susfs_or_ident.h"	/* keep_ident: the files an open_redirect rule served */
 
 /* KSTAT_SPOOF_* bits live in susfs_abi.h (upstream declares them in susfs.h next to struct
  * st_susfs_sus_kstat).  KSTAT_AUTO_SPOOF* below are /proc-interface masks, not supercall ABI. */
@@ -1385,6 +1389,173 @@ static bool susfs_kstat_spoof_statx(struct kstat_call_state *st, unsigned long s
 	return true;
 }
 
+/* ---- keep_ident (open_redirect, this port only) ----
+ * A file a keep_ident rule served reports the identity of the file the caller asked for: st_dev and st_ino,
+ * nothing else (susfs_or_ident.c).  It runs before the sus_kstat spoof, so a sus_kstat rule on the original
+ * applies to its served files the same way it applies to stat() on the original's path.  There is no uid or
+ * umount gate: the table only lists files a rule chose to serve, and isolated processes are covered with the
+ * rest.  Native ABI only.
+ *
+ * The file a call is about:
+ *   fstat(fd)                                       the fd
+ *   newfstatat/statx(fd, "", AT_EMPTY_PATH)         the fd (a NULL name too, which 6.11 and later accept)
+ *   newfstatat/statx(any, "/proc/<own>/fd/N", 0)    the caller's fd N, when the link was followed
+ * <own> is self, thread-self, the caller's tgid, or self or the tgid followed by /task/<the caller's tid>.
+ * The /proc form is rewritten only when the call returned that file's real identity, so a /proc mounted
+ * elsewhere or for another pid namespace leaves the answer alone. */
+
+static atomic_t n_kstat_ident_rewrites = ATOMIC_INIT(0);
+static atomic_t n_kstat_ident_uaccess = ATOMIC_INIT(0);
+
+/* The decimal number at *p, moving *p past it; -1 when there is none or it does not fit an int. */
+static long kstat_take_num(const char **p)
+{
+	const char *s = *p;
+	long v = 0;
+
+	if (*s < '0' || *s > '9')
+		return -1;
+	while (*s >= '0' && *s <= '9') {
+		v = v * 10 + (*s - '0');
+		if (v > INT_MAX)
+			return -1;
+		s++;
+	}
+	*p = s;
+	return v;
+}
+
+/* The fd number of a "/proc/<own>/fd/N" name, -1 for any other name. */
+static int kstat_own_proc_fd(const char *p)
+{
+	long fd;
+
+	if (strncmp(p, "/proc/", 6))
+		return -1;
+	p += 6;
+	if (!strncmp(p, "thread-self/", 12)) {
+		p += 12;
+	} else {
+		if (!strncmp(p, "self/", 5))
+			p += 5;
+		else if (kstat_take_num(&p) != task_tgid_vnr(current) || *p++ != '/')
+			return -1;
+		if (!strncmp(p, "task/", 5)) {
+			p += 5;
+			if (kstat_take_num(&p) != task_pid_vnr(current) || *p++ != '/')
+				return -1;
+		}
+	}
+	if (strncmp(p, "fd/", 3))
+		return -1;
+	p += 3;
+	fd = kstat_take_num(&p);
+	return *p ? -1 : (int)fd;
+}
+
+/* The file a native stat call is about, with a reference, or NULL.  *by_name is set for the /proc form. */
+static struct file *kstat_ident_file(long nr, const unsigned long *args, bool *by_name)
+{
+	const char __user *uname = (const char __user *)args[1];
+	unsigned int at;
+	char name[48];
+	long n = 0;
+	int fd;
+
+	if (nr == __NR_fstat)
+		return fget((unsigned int)args[0]);
+	at = (unsigned int)(nr == __NR_newfstatat ? args[3] : args[2]);
+	if (uname) {
+		n = strncpy_from_user(name, uname, sizeof(name));
+		if (n < 0 || n == sizeof(name))
+			return NULL;
+	}
+	if (!n)
+		return (at & AT_EMPTY_PATH) ? fget((unsigned int)args[0]) : NULL;
+	if (at & AT_SYMLINK_NOFOLLOW)
+		return NULL;
+	fd = kstat_own_proc_fd(name);
+	if (fd < 0)
+		return NULL;
+	*by_name = true;
+	return fget(fd);
+}
+
+/* st_ino/st_dev as the call wrote them: struct stat for fstat/newfstatat, struct statx for statx. */
+static bool kstat_ident_read(long nr, unsigned long buf, unsigned long *ino, dev_t *dev)
+{
+	const struct susfs_statx_offs *o = &kstat_statx_offs;
+	unsigned long st_dev;
+	u32 major, minor;
+	u64 stx_ino;
+
+	if (nr != __NR_statx) {
+		if (copy_from_user(ino, (void __user *)(buf + ST_INO_OFF), sizeof(*ino)) ||
+		    copy_from_user(&st_dev, (void __user *)(buf + ST_DEV_OFF), sizeof(st_dev)))
+			return false;
+		*dev = new_decode_dev((u32)st_dev);
+		return true;
+	}
+	if (copy_from_user(&stx_ino, (void __user *)(buf + o->ino), sizeof(stx_ino)) ||
+	    copy_from_user(&major, (void __user *)(buf + o->dev), sizeof(major)) ||
+	    copy_from_user(&minor, (void __user *)(buf + o->dev_minor), sizeof(minor)))
+		return false;
+	*ino = (unsigned long)stx_ino;
+	*dev = MKDEV(major, minor);
+	return true;
+}
+
+/* The same two fields written back, encoded the way the kernel encodes them for each struct. */
+static void kstat_ident_write(long nr, unsigned long buf, unsigned long ino, dev_t dev)
+{
+	const struct susfs_statx_offs *o = &kstat_statx_offs;
+	unsigned long st_dev = new_encode_dev(dev);
+	u32 major = MAJOR(dev), minor = MINOR(dev);
+	u64 stx_ino = ino;
+
+	bool fault;
+
+	if (nr != __NR_statx)
+		fault = copy_to_user((void __user *)(buf + ST_INO_OFF), &ino, sizeof(ino)) ||
+			copy_to_user((void __user *)(buf + ST_DEV_OFF), &st_dev, sizeof(st_dev));
+	else
+		fault = copy_to_user((void __user *)(buf + o->ino), &stx_ino, sizeof(stx_ino)) ||
+			copy_to_user((void __user *)(buf + o->dev), &major, sizeof(major)) ||
+			copy_to_user((void __user *)(buf + o->dev_minor), &minor, sizeof(minor));
+	atomic_inc(fault ? &n_kstat_ident_uaccess : &n_kstat_ident_rewrites);
+}
+
+/* A served file whose identity was really what the call returned: the /proc form's check. */
+static bool kstat_ident_returned(long nr, unsigned long buf, const struct file *f)
+{
+	struct inode *inode = file_inode(f);
+	unsigned long ino;
+	dev_t dev;
+
+	return kstat_ident_read(nr, buf, &ino, &dev) &&
+	       ino == inode->i_ino && dev == inode->i_sb->s_dev;
+}
+
+/* Called after a successful native fstat/newfstatat/statx with its statbuf argument. */
+static void kstat_keep_ident(long nr, const unsigned long *args, unsigned long buf)
+{
+	bool by_name = false, listed;
+	unsigned long ino;
+	struct file *f;
+	dev_t dev;
+
+	if (!buf || !susfs_or_ident_active())
+		return;
+	f = kstat_ident_file(nr, args, &by_name);
+	if (!f)
+		return;
+	listed = (!by_name || kstat_ident_returned(nr, buf, f)) &&
+		 susfs_or_ident_lookup(f, &ino, &dev);
+	fput(f);
+	if (listed)
+		kstat_ident_write(nr, buf, ino, dev);
+}
+
 /* The post-check, called at the TAIL of the table-entry wrapper (see kstat_hooks[] below) instead
  * of from a entry tail.  Two features ride it, exactly as before: the stat family below,
  * and sus_path's directory-listing rewrite.  The listing side still needs its own gate - see the
@@ -1527,6 +1698,9 @@ static __nocfi void susfs_kstat_post(long nr, bool compat, const unsigned long *
 	 * the gate above selected for THIS ABI can reach it, and the two ABIs' number sets
 	 * (79/80/291 native; 106/107/108, 195/196/197, 327, 397 compat) do not overlap, so it needs
 	 * no gate of its own. */
+	if (!compat)
+		kstat_keep_ident(nr, args, nr == __NR_fstat ? args[1] : nr == __NR_statx ? args[4] : args[2]);
+
 	switch (nr) {
 	case __NR_newfstatat:
 		/* The arguments come from the wrapper now - see the note above. */
@@ -2268,6 +2442,8 @@ static int kstat_proc_show(struct seq_file *m, void *v)
 			   kstat_unlisted_seen[4], kstat_unlisted_seen[5],
 			   kstat_unlisted_seen[6], kstat_unlisted_seen[7]);
 	}
+	seq_printf(m, "keep_ident: rw=%d uacc=%d\n",
+		   atomic_read(&n_kstat_ident_rewrites), atomic_read(&n_kstat_ident_uaccess));
 
 	{
 		char line[512];

@@ -252,8 +252,10 @@ bool susfs_open_redirect_spoof_ids(unsigned long ino, unsigned long *out_ino, un
  * name does not fit).  An app_only rule also requires the caller's exe file to be app_process64 or
  * app_process32.  A pointer into the rule could not be handed out any more: rule slots are
  * recycled now (a deleted rule's slot is handed out again once a grace period has passed), so
- * nothing inside an entry may be read after the lookup returns. */
-bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t buflen);
+ * nothing inside an entry may be read after the lookup returns.  On a match, *keep_ident is the
+ * rule's keep_ident flag. */
+bool susfs_open_redirect_match_path(const struct path *path, char *buf, size_t buflen,
+				    bool *keep_ident);
 
 /* How many rules are live right now.  The name-layer hook runs for every open() on the system, so it
  * tests this before it resolves anything - a table with no live rule costs one load instead of a path
