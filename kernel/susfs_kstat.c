@@ -51,7 +51,7 @@
 #include <linux/cred.h>
 #include <linux/version.h>	/* LINUX_VERSION_CODE: the inode ctime accessor */
 #include <linux/fcntl.h>	/* AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW: keep_ident's fd forms */
-#include <linux/file.h>		/* fget/fput: keep_ident looks at the file behind the fd */
+#include <linux/file.h>		/* fput: keep_ident looks at the file behind the fd */
 #include <linux/sched.h>	/* task_tgid_vnr/task_pid_vnr: the caller's own /proc names */
 #include "susfs_abi.h"
 #include "susfs_log.h"
@@ -61,6 +61,7 @@
 #include "ksu_allow_gate.h"	/* the control-node gate is su's own */
 #include "susfs_kprobe.h"
 #include "susfs_or_ident.h"	/* keep_ident: the files an open_redirect rule served */
+#include "symbol_resolver.h"	/* fget_raw, resolved by name like susfs_opath.c does */
 
 /* KSTAT_SPOOF_* bits live in susfs_abi.h (upstream declares them in susfs.h next to struct
  * st_susfs_sus_kstat).  KSTAT_AUTO_SPOOF* below are /proc-interface masks, not supercall ABI. */
@@ -1402,10 +1403,16 @@ static bool susfs_kstat_spoof_statx(struct kstat_call_state *st, unsigned long s
  *   newfstatat/statx(any, "/proc/<own>/fd/N", 0)    the caller's fd N, when the link was followed
  * <own> is self, thread-self, the caller's tgid, or self or the tgid followed by /task/<the caller's tid>.
  * The /proc form is rewritten only when the call returned that file's real identity, so a /proc mounted
- * elsewhere or for another pid namespace leaves the answer alone. */
+ * elsewhere or for another pid namespace leaves the answer alone.
+ *
+ * The fd is taken with fget_raw(), not fget(): fget() refuses FMODE_PATH files (see the note in
+ * susfs_opath_post_fd()), so an O_PATH fd, which is how a detector opens a library to compare it, would
+ * never reach the table.  Resolved by name for the reason susfs_opath.c gives; unresolved, keep_ident's
+ * stat rewrite stays off. */
 
 static atomic_t n_kstat_ident_rewrites = ATOMIC_INIT(0);
 static atomic_t n_kstat_ident_uaccess = ATOMIC_INIT(0);
+static struct file *(*kstat_fget_raw)(unsigned int fd);
 
 /* The decimal number at *p, moving *p past it; -1 when there is none or it does not fit an int. */
 static long kstat_take_num(const char **p)
@@ -1454,7 +1461,7 @@ static int kstat_own_proc_fd(const char *p)
 }
 
 /* The file a native stat call is about, with a reference, or NULL.  *by_name is set for the /proc form. */
-static struct file *kstat_ident_file(long nr, const unsigned long *args, bool *by_name)
+static __nocfi struct file *kstat_ident_file(long nr, const unsigned long *args, bool *by_name)
 {
 	const char __user *uname = (const char __user *)args[1];
 	unsigned int at;
@@ -1462,8 +1469,10 @@ static struct file *kstat_ident_file(long nr, const unsigned long *args, bool *b
 	long n = 0;
 	int fd;
 
+	if (!kstat_fget_raw)
+		return NULL;
 	if (nr == __NR_fstat)
-		return fget((unsigned int)args[0]);
+		return kstat_fget_raw((unsigned int)args[0]);
 	at = (unsigned int)(nr == __NR_newfstatat ? args[3] : args[2]);
 	if (uname) {
 		n = strncpy_from_user(name, uname, sizeof(name));
@@ -1471,14 +1480,14 @@ static struct file *kstat_ident_file(long nr, const unsigned long *args, bool *b
 			return NULL;
 	}
 	if (!n)
-		return (at & AT_EMPTY_PATH) ? fget((unsigned int)args[0]) : NULL;
+		return (at & AT_EMPTY_PATH) ? kstat_fget_raw((unsigned int)args[0]) : NULL;
 	if (at & AT_SYMLINK_NOFOLLOW)
 		return NULL;
 	fd = kstat_own_proc_fd(name);
 	if (fd < 0)
 		return NULL;
 	*by_name = true;
-	return fget(fd);
+	return kstat_fget_raw(fd);
 }
 
 /* st_ino/st_dev as the call wrote them: struct stat for fstat/newfstatat, struct statx for statx. */
@@ -2304,6 +2313,10 @@ int susfs_kstat_init(void)
 {
 	int rc;
 	int i;
+
+	kstat_fget_raw = (void *)find_kernel_symbol_exact("fget_raw");
+	if (!kstat_fget_raw)
+		pr_warn("kstat: fget_raw not resolved - keep_ident's stat rewrite stays off\n");
 
 	/* The entries are armed UNCONDITIONALLY, and that is not cosmetic: the supercall interface
 	 * (CMD_SUSFS_ADD_SUS_KSTAT) can install rules with no /proc node at all, so skipping
