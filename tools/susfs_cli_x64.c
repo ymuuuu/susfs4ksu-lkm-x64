@@ -336,7 +336,7 @@ int sc_main(long argc, char **argv)
 		got = proc_write("/proc/susfs_kstat");
 		return got < 0 ? fail("update_sus_kstat_full_clone", got) : 0;
 	}
-	if (sequal(argv[1], "add_open_redirect") && argc >= 5 && argc <= 7) {
+	if (sequal(argv[1], "add_open_redirect") && argc >= 5 && argc <= 8) {
 		if (join(argv, 1, argc - 1))
 			goto usage;
 		got = proc_write("/proc/susfs_open_redirect");
@@ -380,7 +380,7 @@ usage:
 	    "       susfs add_sus_kstat_statically <path> <12 values or default>\n"
 	    "       susfs update_sus_kstat <path>\n"
 	    "       susfs update_sus_kstat_full_clone <path>\n"
-	    "       susfs add_open_redirect <target> <redirected> <uid_scheme 0-4> [no_reverse] [app_only]\n"
+	    "       susfs add_open_redirect <target> <redirected> <uid_scheme 0-4> [no_reverse] [app_only] [keep_ident]\n"
 	    "       susfs set_uname <release> <version>\n"
 	    "       susfs set_cmdline_or_bootconfig <file>\n");
 	return 2;
