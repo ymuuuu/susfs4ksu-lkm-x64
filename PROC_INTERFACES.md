@@ -109,6 +109,7 @@ echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme>" > /pro
 echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme> no_reverse" > /proc/susfs_open_redirect
 echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme> app_only" > /proc/susfs_open_redirect
 echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme> no_reverse app_only" > /proc/susfs_open_redirect
+echo "add_open_redirect <目标> <被重定向到的文件> <uid_scheme> no_reverse app_only keep_ident" > /proc/susfs_open_redirect
 echo "del <目标>"                                               > /proc/susfs_open_redirect
 echo clear                                                      > /proc/susfs_open_redirect
 ```
@@ -121,7 +122,9 @@ echo clear                                                      > /proc/susfs_op
 
 `app_only`（可选的第 5 或第 6 个参数，仅本移植版）：只在该进程的可执行文件是 `/system/bin/app_process64` 或 `/system/bin/app_process32` 时才做正向重定向，比较 inode 号和设备号，不看路径。没有 `mm` 或没有 `exe_file` 的进程不命中；app 用 `execve` 启动的程序也不命中（它的 exe 不同），照常执行原来的 open。app_process 的 inode 在添加第一条 `app_only` 规则时用 `kern_path()` 解析；不存在的文件直接跳过，两个都不存在时添加返回 `-ENOENT`，不注册任何东西。内核没有 `get_mm_exe_file` 符号时添加返回 `-EOPNOTSUPP`。不支持 `app_only` 的版本对该参数返回 `-EINVAL`，调用方可以先试再回退。反向伪装不受影响。列表行带 ` app_only`。
 
-第 5、第 6 个参数只接受 `no_reverse` 和 `app_only`，顺序任意，每个最多一次；其他任何值或重复都返回 `-EINVAL`，且不注册任何东西。v0.0.7 之前的版本对所有五个参数的写入都返回 `-EINVAL`，所以调用方可以先试带标志的写入，失败再回退。对同一目标再次添加会替换该规则，不带标志重新添加即清除这些标志。supercall（`ksu_susfs`）没有对应字段，总是添加普通规则；请用 `/proc` 或本模块的 `susfs add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] [app_only]`。
+`keep_ident`（可选的第 5、6 或 7 个参数，仅本移植版）：该规则替调用方打开的文件，报告目标文件的 `st_dev` 和 `st_ino`，而不是被重定向到的文件的，使 fd 上的 `fstat()` 与路径上的 `stat()` 一致。其他字段不变。覆盖 `fstat(fd)`、对该 fd 使用 `AT_EMPTY_PATH` 的 `newfstatat`/`statx`，以及跟随 `/proc/self/fd/N`、`/proc/thread-self/fd/N`、`/proc/<自身 tgid>/fd/N` 或其 `/task/<自身 tid>/fd/N` 形式的 `newfstatat`/`statx`。`/proc` 路径只在调用返回的正是该文件真实身份时才改写。被重定向到的文件的其他 open、32 位（compat）stat 调用、其他进程的 `/proc` fd、相对 dirfd 的路径都不改。没有 uid 门槛：隔离进程同样生效。模块对每个被服务的文件持有一个引用，所以文件的最终释放（以及它的 `IN_CLOSE_NOWRITE`）发生在模块丢弃该条目时：在没有其他持有者之后的下一次被服务的 open，或规则被删除、被不带 `keep_ident` 的规则替换、被清空时。最多同时记录 512 个被服务的文件；表满时被服务的文件保持自己的身份。列表行带 ` keep_ident`，列表末尾有 `keep_ident: listed=<当前> tracked=<累计> hits=<命中的查询> full=<因表满未记录>`。`/proc/susfs_kstat` 显示 `keep_ident: rw=<改写次数> uacc=<写入失败>`。
+
+第 5 到第 7 个参数只接受 `no_reverse`、`app_only` 和 `keep_ident`，顺序任意，每个最多一次；其他任何值或重复都返回 `-EINVAL`，且不注册任何东西。v0.0.7 之前的版本对所有五个参数的写入都返回 `-EINVAL`，所以调用方可以先试带标志的写入，失败再回退。对同一目标再次添加会替换该规则，不带标志重新添加即清除这些标志。supercall（`ksu_susfs`）没有对应字段，总是添加普通规则；请用 `/proc` 或本模块的 `susfs add_open_redirect <target> <redirected> <uid_scheme> [no_reverse] [app_only] [keep_ident]`。
 
 `uid_scheme` 取值 `0..4`，越界在 `add` 阶段直接拒绝（`-EINVAL`）：
 
