@@ -159,7 +159,7 @@ loaded || { sec "result"; echo "  not loaded - the dmesg above is the evidence";
 # they went - but only the "not resolved" line is unconditional: the "resolved" one is SUSFS_LOGI, so a
 # load that was started with enable_log=0 prints neither (that is a documented feature, not a failure
 # of this script).  Only a load that was NOT silent and printed neither line means the layer never ran
-# (fail_layer=1 skips it, which is a diagnostic).
+# (fail_layer=2 skips it, which is a diagnostic).
 if dmesg | grep -q 'ksu_umount_gate: resolved ksu_uid_should_umount at'; then
     ok "gate: KernelSU's predicate resolved - issue #34's rule is in effect"
 elif dmesg | grep -q 'ksu_uid_should_umount is not in kallsyms'; then
@@ -168,7 +168,7 @@ else
     el=$(cat "$P/enable_log" 2>/dev/null)
     case "$el" in
         N) note "gate: no decision line - the load was silent (enable_log=0), so the 'resolved' line was never printed; reload without enable_log=0 to see which way the gate went" ;;
-        *) bad "gate: no decision line in dmesg (enable_log=${el:-?}) - the ksu_umount_gate layer did not run (fail_layer=1?)" ;;
+        *) bad "gate: no decision line in dmesg (enable_log=${el:-?}) - the ksu_umount_gate layer did not run (fail_layer=2?)" ;;
     esac
 fi
 
