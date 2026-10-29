@@ -1,13 +1,13 @@
 # susfs4ksu-lkm-x64
 
 <p align="center">
-  <a href="https://github.com/ymuuuu/susfs4ksu-lkm-x64/stargazers"><img src="https://img.shields.io/github/stars/ymuuuu/susfs4ksu-lkm-x64?style=flat&label=%E2%98%85&color=08C" alt="GitHub stars" /></a>
-  <a href="https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases/latest"><img src="https://img.shields.io/github/v/release/ymuuuu/susfs4ksu-lkm-x64?style=flat&color=08C" alt="Latest release" /></a>
-  <a href="https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases"><img src="https://img.shields.io/github/downloads/ymuuuu/susfs4ksu-lkm-x64/total?style=flat&color=08C" alt="Total downloads across all releases" /></a>
-  <img src="https://img.shields.io/badge/license-GPL--2.0-08C?style=flat" alt="License: GPL-2.0" />
-  <a href="https://t.me/ymuulabs"><img src="https://img.shields.io/badge/Telegram-26A5E4?logo=telegram&logoColor=white" alt="Telegram channel" /></a>
-  <a href="https://x.com/ymuuu_"><img src="https://img.shields.io/badge/X-000000?logo=x&logoColor=white" alt="Follow on X" /></a>
-  <img src="https://img.shields.io/badge/Android%20x86__64%20emulator-4493F8?style=flat-square" alt="Platform: Android x86_64 emulator" />
+  <a href="https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases/latest"><img src="https://img.shields.io/github/v/release/ymuuuu/susfs4ksu-lkm-x64?style=flat&color=0969DA" alt="Latest release" /></a>
+  <a href="https://github.com/ymuuuu/susfs4ksu-lkm-x64/releases"><img src="https://img.shields.io/github/downloads/ymuuuu/susfs4ksu-lkm-x64/total?style=flat&color=8957E5" alt="Total downloads across all releases" /></a>
+  <a href="https://github.com/ymuuuu/susfs4ksu-lkm-x64/stargazers"><img src="https://img.shields.io/github/stars/ymuuuu/susfs4ksu-lkm-x64?style=flat&label=%E2%98%85&color=E3B341" alt="GitHub stars" /></a>
+  <img src="https://img.shields.io/badge/license-GPL--2.0-F0883E?style=flat" alt="License: GPL-2.0" />
+  <img src="https://img.shields.io/badge/Android%20x86__64%20emulator-3DDC84?style=flat&logo=android&logoColor=white" alt="Platform: Android x86_64 emulator" />
+  <a href="https://t.me/ymuulabs"><img src="https://img.shields.io/badge/Telegram-26A5E4?style=flat&logo=telegram&logoColor=white" alt="Telegram channel" /></a>
+  <a href="https://x.com/ymuuu_"><img src="https://img.shields.io/badge/X-000000?style=flat&logo=x&logoColor=white" alt="Follow on X" /></a>
 </p>
 
 x86_64 port of [inforcqb/susfs4ksu-lkm](https://github.com/inforcqb/susfs4ksu-lkm): susfs as a loadable kernel module for the Android 16 x86_64 emulator image, whose kernel comes from the android15-6.6 branch (6.6.66-android15-8), running beside KernelSU-Next LKM. No custom kernel, nothing replaces the ramdisk. 
