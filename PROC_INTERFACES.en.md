@@ -21,6 +21,7 @@ Write commands **return `len` on success, a negative errno on failure**.
 | [`/proc/susfs_hide_modules`](#procsusfs_hide_modules) | drop **other kernel modules** from `/proc/modules` by name | `add <name>` / `del <name>` / `set <name>…` / `clear` |
 | [`/proc/susfs_hide_mounts`](#procsusfs_hide_mounts) | which mounts count as "ours" (the set of mounts to hide) | `add <prefix>` / `del <prefix>` / `set <prefix>…` / `reset` / `clear` |
 | [`/proc/susfs_path`](#procsusfs_path) | the sus_path rule table -- **`cat` is the listing** | `add <path>` / `del <path>` / `clear` |
+| [`/proc/susfs_map`](#procsusfs_map) | hide the mapped real file by inode (`maps`/`smaps`/`smaps_rollup`/`map_files`/`pagemap`) | `add <path>` / `del <path>` / `clear` |
 | [`/proc/susfs_opath`](#procsusfs_opath) | self-check of the `open(..., O_PATH)` coverage on hidden paths | -- (read-only; two parameters `opath_test` / `opath_dump`) |
 
 The nodes are created only when sus_path's LSM layer is installed.
@@ -267,3 +268,24 @@ This module makes the **path name** invisible (`ENOENT`), but does not block cha
 ```sh
 ksu_susfs add_open_redirect <target> <redirected> <uid_scheme>   # uid_scheme: 0..4
 ```
+
+## /proc/susfs_map
+
+Hides the mapped real file by inode from `/proc/<pid>/maps`, `smaps`, `smaps_rollup`, `map_files`, and `pagemap`; the rules are the same set as the reboot(2) supercall `CMD_SUSFS_ADD_SUS_MAP`.
+
+**Read**:
+
+```text
+rules: 1/64
+ino=123456 dev=65099
+```
+
+**Write**:
+
+```sh
+echo "add /system/lib64/libfoo.so" > /proc/susfs_map
+echo "del /system/lib64/libfoo.so" > /proc/susfs_map
+echo clear > /proc/susfs_map
+```
+
+`add` resolves the path (following symlinks) and registers its inode; `del` resolves the same path and removes the matching rule; `clear` drops all rules. 

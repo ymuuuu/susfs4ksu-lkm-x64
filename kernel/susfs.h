@@ -122,6 +122,10 @@ bool susfs_hide_modules_node_ready(void);
  * Root-only, ENOENT for everyone else through sus_path. */
 #define SUSFS_PROP_VIEW_NODE "/proc/susfs_prop_view"
 
+/* sus_map's rule node: add/del/clear the mappings the maps/smaps/map_files walk hides.  Root-only
+ * through the same su-side gate as the other control nodes. */
+#define SUSFS_MAP_NODE "/proc/susfs_map"
+
 /* Whether the /proc/susfs_* control nodes are created at all.  Defaults to TRUE; they are created only when the LSM layer
  * that hides them is installed, so nobody ends up with an unprotected control node, and expose_proc=0 removes them. */
 extern bool susfs_expose_proc;
@@ -164,6 +168,9 @@ void susfs_avc_spoof_exit(void);
 
 int susfs_supercall_init(void);
 void susfs_supercall_exit(void);
+/* True when the sys_call_table hook could not arm and the supercall is delivered
+ * through the kprobe fallback (see susfs_supercall_init()). */
+bool susfs_supercall_kprobe_active(void);
 
 /* Feature registry for the reboot(2) supercall.  A layer arms its feature only after its init
  * returned 0, so a non-fatal layer that failed is neither advertised by SHOW_ENABLED_FEATURES
@@ -227,6 +234,11 @@ bool sus_path_inode_hidden_public(struct inode *inode);
 /* Whether any sus_path rule is live right now: the create-family entries test this before
  * they resolve a path, so an empty table costs one load and nothing else. */
 bool sus_path_rules_present(void);
+
+/* Whether any ordinary (operator-supplied) sus_path rule is live.  Self-protect entries for the
+ * module's own /proc nodes are deliberately excluded: the create family must stay a fast pass
+ * when only those exist. */
+bool sus_path_user_rules_present(void);
 
 /* Whether a 0777 /proc/susfs_* control node may be created.  Two independent conditions, neither optional: susfs_expose_proc
  * (the operator opted in) and sus_path_lsm_active() (with 0777 DAC passes every caller, so only the LSM layer can still

@@ -71,6 +71,7 @@ static const char *const susfs_self_hide_paths[] = {
     /* The O_PATH layer's node: it reports the four sys_call_table/compat_sys_call_table
      * entries and the counters that say whether a wrapper ever ran. */
     SUSFS_OPATH_NODE,
+    SUSFS_MAP_NODE,
     /* The module's own sysfs directory is NOT here: it belongs to hide_module
      * (susfs_hide_syms.c), which adds and drops that rule at runtime. */
 };
@@ -78,7 +79,7 @@ static const char *const susfs_self_hide_paths[] = {
 /* Register our control nodes in sus_path's hidden set: probing them must answer ENOENT,
  * not EACCES.  Runs after every feature init (the nodes must exist for kern_path() to
  * resolve them) and after sus_path_init(), so the hooks are already patched. */
-static void susfs_self_hide_nodes(void)
+void susfs_self_hide_nodes(void)
 {
     int i;
 
@@ -497,6 +498,13 @@ static int __init susfs_init(void)
      * from pr_fmt (susfs_log.h), so the message must not repeat it. */
     pr_info("loaded. This module is filtered out of /proc/modules for every caller including root, so `lsmod | grep susfs` stays empty - check /sys/module/%s instead (a second insmod fails with -EEXIST while it is loaded).\n",
             SUSFS_LKM_MODULE_NAME);
+
+    /* A supercall kprobe on the reboot entry is a visible breakpoint, not just an
+     * implementation detail.  Emit this after every layer has armed and only when the
+     * module is actually loaded; keep it unconditional (pr_warn, not SUSFS_LOGI) so it
+     * survives enable_log=0, like the loaded line above. */
+    if (susfs_supercall_kprobe_active())
+        pr_warn("supercall delivery uses the kprobe path: it leaves a breakpoint on " SUSFS_SC_WRAPPER_NAME(reboot) ", visible through /sys/kernel/debug/kprobes/list and text/instruction inspection - treat this as a side channel.\n");
 
     return 0;
 }

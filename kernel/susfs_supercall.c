@@ -496,6 +496,13 @@ int susfs_supercall_init(void)
 	return 0;
 }
 
+/* On x86_64 the kprobe is the only delivery path, so this is true whenever the
+ * supercall is armed. */
+bool susfs_supercall_kprobe_active(void)
+{
+	return sc_registered;
+}
+
 void susfs_supercall_exit(void)
 {
 	cancel_delayed_work_sync(&canary_dw);
