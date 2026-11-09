@@ -126,6 +126,9 @@ bool susfs_hide_modules_node_ready(void);
  * through the same su-side gate as the other control nodes. */
 #define SUSFS_MAP_NODE "/proc/susfs_map"
 
+/* sus_unix's node: add/del/clear the abstract AF_UNIX names an app connect() must not reach.  Root-only. */
+#define SUSFS_UNIX_NODE "/proc/susfs_unix"
+
 /* Whether the /proc/susfs_* control nodes are created at all.  Defaults to TRUE; they are created only when the LSM layer
  * that hides them is installed, so nobody ends up with an unprotected control node, and expose_proc=0 removes them. */
 extern bool susfs_expose_proc;
@@ -142,6 +145,9 @@ void susfs_kstat_exit(void);
 
 int susfs_sus_map_init(void);
 void susfs_sus_map_exit(void);
+
+int susfs_sus_unix_init(void);
+void susfs_sus_unix_exit(void);
 
 int sus_path_init(void);
 void sus_path_exit(void);

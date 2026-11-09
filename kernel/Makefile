@@ -16,7 +16,7 @@ susfs_guard_lkm-objs := susfs_main.o patch_memory.o symbol_resolver.o lsm_hook.o
               susfs_or_ident.o susfs_prop_view.o \
               susfs_create_gate.o susfs_create_vfs.o susfs_create_data.o susfs_create_policy.o \
               sus_mount_identity.o sus_mount_idmap.o sus_mount_prefix.o sus_mount_policy.o sus_mount_view.o sus_mount_ns_iter.o \
-              fsnotify_lifetime.o btf_layout.o sus_dirent.o
+              fsnotify_lifetime.o btf_layout.o sus_dirent.o sus_unix.o
 
 susfs_guard_lkm-objs += kallrecon/lib/core.o kallrecon/lib/access.o kallrecon/lib/discover.o \
               kallrecon/lib/symbol.o kallrecon/lib/slide.o kallrecon/lib/fastboot.o \
