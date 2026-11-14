@@ -29,6 +29,7 @@ Features this fork has on top of upstream, beyond the x86_64 port itself. Detail
 | Redirect target exempt from sus_path | A redirect's own open of its target is not blocked when the target is also a sus_path. | Automatic | v0.0.8 |
 | `/proc/susfs_uname_machine` | `uname()` reports the given `machine` only to processes that map the marker file (translated arm64 apps). | `set <machine> <marker path>` / `clear` | v0.0.8 |
 | `/proc/susfs_prop_view` | When a process becomes an app (at `setresuid`), its mapping of a property area file is replaced with a copy at the same address. Root, shell and non-app processes keep the real area. | `add <real_area_path> <copy_path>` / `clear` | v0.0.8 |
+| `/proc/susfs_unix` | An app's `connect()` to a listed abstract unix socket name (for example `@jdwp-control`) answers `ECONNREFUSED`, as if nothing listens. Root and shell connect normally. | `add <name>` / `del <name>` / `clear` | v0.1.0 |
 
 ## Build
 

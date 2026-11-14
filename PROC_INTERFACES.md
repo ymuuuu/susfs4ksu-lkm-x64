@@ -22,6 +22,7 @@
 | [`/proc/susfs_hide_mounts`](#procsusfs_hide_mounts) | 哪些挂载算"我们的"（决定隐藏的挂载集合） | `add <前缀>` / `del <前缀>` / `set <前缀>…` / `reset` / `clear` |
 | [`/proc/susfs_path`](#procsusfs_path) | sus_path 规则表——**`cat` 就是清单** | `add <路径>` / `del <路径>` / `clear` |
 | [`/proc/susfs_map`](#procsusfs_map) | 按 inode 隐藏 mmap 的 real file（`maps`/`smaps`/`smaps_rollup`/`map_files`/`pagemap`） | `add <路径>` / `del <路径>` / `clear` |
+| [`/proc/susfs_unix`](#procsusfs_unix) | 对 app 的 `connect()` 隐藏列出的抽象 `AF_UNIX` 名字 | `add <名字>` / `del <名字>` / `clear` |
 | [`/proc/susfs_opath`](#procsusfs_opath) | `open(..., O_PATH)` 在隐藏路径上的覆盖自检 | —（只读；两个参数 `opath_test` / `opath_dump`） |
 
 节点只在 sus_path 的 LSM 层装上时才创建。
@@ -289,3 +290,28 @@ echo clear > /proc/susfs_map
 ```
 
 `add` 解析路径（跟随符号链接）并登记 inode；`del` 解析同一路径后删除匹配项；`clear` 清空。
+
+---
+
+## /proc/susfs_unix
+
+抽象 unix socket 没有 inode，sus_path 隐藏不了；app 连一下就能证明监听者存在（例如 adbd 的 `@jdwp-control`）。对 sus_path 隐藏的调用者，在 `AF_UNIX` socket 上 `connect()` 列出的抽象名字返回 `-ECONNREFUSED`，与没人绑定的名字相同。root、shell 及其它调用原样走原来的 `connect()`。只有 `connect()` 表项装上时才创建该节点。
+
+**读**：
+
+```text
+# abstract names: 1/16, hook=1, checked=4, hidden=2
+@jdwp-control
+```
+
+`hook` 为 1 表示 `connect()` 表项已装上；`checked` 统计被隐藏调用者对抽象名字的连接次数；`hidden` 统计其中返回 `-ECONNREFUSED` 的次数。
+
+**写**：
+
+```sh
+echo "add jdwp-control" > /proc/susfs_unix   # 前导 @ 可有可无；已在列表 -> 成功
+echo "del jdwp-control" > /proc/susfs_unix   # 不在列表 -> -ENOENT
+echo clear              > /proc/susfs_unix
+```
+
+最多 16 个名字，每个 1 到 107 字节。列表满返回 `-ENOSPC`，未知命令或 `add` 空名字返回 `-EINVAL`。

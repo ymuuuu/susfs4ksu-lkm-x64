@@ -22,6 +22,7 @@ Write commands **return `len` on success, a negative errno on failure**.
 | [`/proc/susfs_hide_mounts`](#procsusfs_hide_mounts) | which mounts count as "ours" (the set of mounts to hide) | `add <prefix>` / `del <prefix>` / `set <prefix>…` / `reset` / `clear` |
 | [`/proc/susfs_path`](#procsusfs_path) | the sus_path rule table -- **`cat` is the listing** | `add <path>` / `del <path>` / `clear` |
 | [`/proc/susfs_map`](#procsusfs_map) | hide the mapped real file by inode (`maps`/`smaps`/`smaps_rollup`/`map_files`/`pagemap`) | `add <path>` / `del <path>` / `clear` |
+| [`/proc/susfs_unix`](#procsusfs_unix) | hide listed abstract `AF_UNIX` names from app `connect()` | `add <name>` / `del <name>` / `clear` |
 | [`/proc/susfs_opath`](#procsusfs_opath) | self-check of the `open(..., O_PATH)` coverage on hidden paths | -- (read-only; two parameters `opath_test` / `opath_dump`) |
 
 The nodes are created only when sus_path's LSM layer is installed.
@@ -289,3 +290,28 @@ echo clear > /proc/susfs_map
 ```
 
 `add` resolves the path (following symlinks) and registers its inode; `del` resolves the same path and removes the matching rule; `clear` drops all rules. 
+
+---
+
+## /proc/susfs_unix
+
+An abstract unix socket has no inode, so sus_path cannot hide it, and an app can prove a listener exists by connecting to it (for example adbd's `@jdwp-control`). For the callers sus_path hides from, a `connect()` to a listed abstract name on an `AF_UNIX` socket returns `-ECONNREFUSED`, the same answer as for a name nobody has bound. Root, shell and every other call go to the original `connect()` unchanged. The node exists only when the `connect()` entry was installed.
+
+**Read**:
+
+```text
+# abstract names: 1/16, hook=1, checked=4, hidden=2
+@jdwp-control
+```
+
+`hook` is 1 when the `connect()` entry is installed, `checked` counts abstract-name connects from hidden callers, `hidden` counts the ones answered with `-ECONNREFUSED`.
+
+**Write**:
+
+```sh
+echo "add jdwp-control" > /proc/susfs_unix   # a leading @ is optional; already listed -> success
+echo "del jdwp-control" > /proc/susfs_unix   # not listed -> -ENOENT
+echo clear              > /proc/susfs_unix
+```
+
+Up to 16 names of 1 to 107 bytes. A full list answers `-ENOSPC`, an unknown command or an empty `add` name `-EINVAL`.
