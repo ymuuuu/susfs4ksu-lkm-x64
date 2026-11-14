@@ -226,10 +226,10 @@ static int sus_unix_show(struct seq_file *m, void *v)
 	char name[SUS_UNIX_NAME_MAX + 1];
 	int i;
 
-	seq_printf(m, "# abstract names: %d/%d, hook=%d, checked=%d, hidden=%d\n",
-		   READ_ONCE(sus_unix_count), SUS_UNIX_MAX, (int)connect_hook.installed,
-		   atomic_read(&n_checked), atomic_read(&n_hidden));
 	spin_lock(&sus_unix_lock);
+	seq_printf(m, "# abstract names: %d/%d, hook=%d, checked=%d, hidden=%d\n",
+		   sus_unix_count, SUS_UNIX_MAX, (int)connect_hook.installed,
+		   atomic_read(&n_checked), atomic_read(&n_hidden));
 	for (i = 0; i < sus_unix_count; i++) {
 		memcpy(name, sus_unix_names[i].name, sus_unix_names[i].len);
 		name[sus_unix_names[i].len] = '\0';
@@ -310,7 +310,8 @@ int susfs_sus_unix_init(void)
 		if (!sus_unix_proc)
 			pr_warn("proc_create(susfs_unix) failed\n");
 	}
-	SUSFS_LOGI("sus_unix: armed (connect native+compat, proc=%d)\n", sus_unix_proc ? 1 : 0);
+	SUSFS_LOGI("sus_unix: armed (connect %s, proc=%d)\n",
+		   connect_hook.orig_compat ? "native+compat" : "native", sus_unix_proc ? 1 : 0);
 	return 0;
 }
 
@@ -324,7 +325,7 @@ void susfs_sus_unix_exit(void)
 		susfs_fp_remove(&connect_hook);
 		susfs_fp_drain();
 	}
-	pr_info("sus_unix: checked=%d hidden=%d\n",
+	SUSFS_LOGI("sus_unix: checked=%d hidden=%d\n",
 		atomic_read(&n_checked), atomic_read(&n_hidden));
 	sus_unix_clear();
 }
