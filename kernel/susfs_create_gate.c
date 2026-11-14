@@ -41,15 +41,25 @@
 #include "susfs_create_data.h"
 #include "susfs_create_policy.h"
 #include "susfs_create_vfs.h"
+#include "susfs_kprobe.h"
 #include "susfs_log.h"
 
 /* The AArch32 table numbers (arch/arm/tools/syscall.tbl); the native ones come
  * from __NR_*.  Kept spelled out for the same reason susfs_fp_hook.h spells the
  * compat indexes out: the two tables do not share a numbering. */
+#ifdef __aarch64__
 #define COMPAT_MKNODAT_NR	33
 #define COMPAT_MKDIRAT_NR	34
 #define COMPAT_SYMLINKAT_NR	36
 #define COMPAT_LINKAT_NR	37
+#else
+/* x86_64: those AArch32 numbers would land on unrelated ia32 entries, so no
+ * compat entry (0) here, the same as the kstat hooks. */
+#define COMPAT_MKNODAT_NR	0
+#define COMPAT_MKDIRAT_NR	0
+#define COMPAT_SYMLINKAT_NR	0
+#define COMPAT_LINKAT_NR	0
+#endif
 
 static susfs_syscall_fn_t create_orig(enum susfs_create_syscall id)
 {
@@ -73,8 +83,8 @@ static __nocfi noinline long create_wrap_mkdirat(const struct pt_regs *regs)
 	 * trailing non-name components keep the kernel's own answer. */
 	ret = orig(regs);
 	if (ret == -EEXIST &&
-	    susfs_create_name_hidden((int)regs->regs[0],
-				     (const char __user *)regs->regs[1]))
+	    susfs_create_name_hidden((int)susfs_sc_arg(regs, 0),
+				     (const char __user *)susfs_sc_arg(regs, 1)))
 		return -EACCES;
 	return ret;
 }
@@ -85,19 +95,19 @@ static __nocfi noinline long create_wrap_mknodat(const struct pt_regs *regs)
 
 	if (!orig)
 		return -ENOSYS;
-	if (susfs_create_name_hidden((int)regs->regs[0], (const char __user *)regs->regs[1]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 0), (const char __user *)susfs_sc_arg(regs, 1)))
 		return -EACCES;
 	return orig(regs);
 }
 
 static __nocfi noinline long create_wrap_symlinkat(const struct pt_regs *regs)
 {
-	/* symlinkat(oldname, newdfd, newname): the path created is regs[2]. */
+	/* symlinkat(oldname, newdfd, newname): the path created is argument 2. */
 	susfs_syscall_fn_t orig = create_orig(SUSFS_CREATE_SYMLINKAT);
 
 	if (!orig)
 		return -ENOSYS;
-	if (susfs_create_name_hidden((int)regs->regs[1], (const char __user *)regs->regs[2]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 1), (const char __user *)susfs_sc_arg(regs, 2)))
 		return -EACCES;
 	return orig(regs);
 }
@@ -111,9 +121,9 @@ static __nocfi noinline long create_wrap_linkat(const struct pt_regs *regs)
 
 	if (!orig)
 		return -ENOSYS;
-	if (susfs_create_name_hidden((int)regs->regs[0], (const char __user *)regs->regs[1]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 0), (const char __user *)susfs_sc_arg(regs, 1)))
 		return -ENOENT;
-	if (susfs_create_name_hidden((int)regs->regs[2], (const char __user *)regs->regs[3]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 2), (const char __user *)susfs_sc_arg(regs, 3)))
 		return -EACCES;
 	return orig(regs);
 }
@@ -127,8 +137,8 @@ static __nocfi noinline long create_wrap_compat_mkdirat(const struct pt_regs *re
 		return -ENOSYS;
 	ret = orig(regs);
 	if (ret == -EEXIST &&
-	    susfs_create_name_hidden((int)regs->regs[0],
-				     (const char __user *)regs->regs[1]))
+	    susfs_create_name_hidden((int)susfs_sc_arg(regs, 0),
+				     (const char __user *)susfs_sc_arg(regs, 1)))
 		return -EACCES;
 	return ret;
 }
@@ -139,7 +149,7 @@ static __nocfi noinline long create_wrap_compat_mknodat(const struct pt_regs *re
 
 	if (!orig)
 		return -ENOSYS;
-	if (susfs_create_name_hidden((int)regs->regs[0], (const char __user *)regs->regs[1]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 0), (const char __user *)susfs_sc_arg(regs, 1)))
 		return -EACCES;
 	return orig(regs);
 }
@@ -150,7 +160,7 @@ static __nocfi noinline long create_wrap_compat_symlinkat(const struct pt_regs *
 
 	if (!orig)
 		return -ENOSYS;
-	if (susfs_create_name_hidden((int)regs->regs[1], (const char __user *)regs->regs[2]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 1), (const char __user *)susfs_sc_arg(regs, 2)))
 		return -EACCES;
 	return orig(regs);
 }
@@ -161,25 +171,25 @@ static __nocfi noinline long create_wrap_compat_linkat(const struct pt_regs *reg
 
 	if (!orig)
 		return -ENOSYS;
-	if (susfs_create_name_hidden((int)regs->regs[0], (const char __user *)regs->regs[1]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 0), (const char __user *)susfs_sc_arg(regs, 1)))
 		return -ENOENT;
-	if (susfs_create_name_hidden((int)regs->regs[2], (const char __user *)regs->regs[3]))
+	if (susfs_create_name_hidden((int)susfs_sc_arg(regs, 2), (const char __user *)susfs_sc_arg(regs, 3)))
 		return -EACCES;
 	return orig(regs);
 }
 
 static struct susfs_fp_hook create_hooks[] = {
 	{ .nr = __NR_mkdirat, .nr_compat = COMPAT_MKDIRAT_NR,
-	  .name = "create/mkdirat", .sym = "__arm64_sys_mkdirat",
+	  .name = "create/mkdirat", .sym = SUSFS_SC_WRAPPER_NAME(mkdirat),
 	  .wrapper = create_wrap_mkdirat, .wrapper_compat = create_wrap_compat_mkdirat },
 	{ .nr = __NR_mknodat, .nr_compat = COMPAT_MKNODAT_NR,
-	  .name = "create/mknodat", .sym = "__arm64_sys_mknodat",
+	  .name = "create/mknodat", .sym = SUSFS_SC_WRAPPER_NAME(mknodat),
 	  .wrapper = create_wrap_mknodat, .wrapper_compat = create_wrap_compat_mknodat },
 	{ .nr = __NR_symlinkat, .nr_compat = COMPAT_SYMLINKAT_NR,
-	  .name = "create/symlinkat", .sym = "__arm64_sys_symlinkat",
+	  .name = "create/symlinkat", .sym = SUSFS_SC_WRAPPER_NAME(symlinkat),
 	  .wrapper = create_wrap_symlinkat, .wrapper_compat = create_wrap_compat_symlinkat },
 	{ .nr = __NR_linkat, .nr_compat = COMPAT_LINKAT_NR,
-	  .name = "create/linkat", .sym = "__arm64_sys_linkat",
+	  .name = "create/linkat", .sym = SUSFS_SC_WRAPPER_NAME(linkat),
 	  .wrapper = create_wrap_linkat, .wrapper_compat = create_wrap_compat_linkat },
 };
 
