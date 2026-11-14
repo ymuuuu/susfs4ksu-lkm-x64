@@ -8,7 +8,7 @@
  * runs, which detectors use as ADB liveness evidence.  SELinux cannot help: a denial is EACCES,
  * and since the LSM check runs after the name lookup, EACCES also proves the listener exists.
  *
- * This layer replaces the connect() table entry (native and AArch32).  For a caller that
+ * This layer replaces the connect() table entry (native, plus AArch32 on arm64).  For a caller that
  * sus_path hides from (susfs_is_current_proc_umounted_app()), a connect to a listed abstract
  * name on an AF_UNIX socket answers -ECONNREFUSED, which is what unix_find_other() answers for an
  * abstract name nobody has bound.  Every other call goes to the original entry unchanged, so the
@@ -45,9 +45,17 @@
 #include "susfs_fp_hook.h"
 #include "ksu_umount_gate.h"
 #include "ksu_allow_gate.h"
+#include "susfs_kprobe.h"
 
+#ifdef __aarch64__
 /* arch/arm/tools/syscall.tbl: 283 common connect.  The compat table has its own numbering. */
 #define SUS_UNIX_COMPAT_NR_CONNECT	283
+#else
+/* x86_64: no compat entry (0), the same as the other fp hooks.  An ia32 caller reaches connect
+ * through both connect (362) and socketcall (102), and the second carries its arguments in a
+ * user array, so covering ia32 is more than a renumbering.  The target has no 32-bit zygote. */
+#define SUS_UNIX_COMPAT_NR_CONNECT	0
+#endif
 
 #define SUS_UNIX_MAX		16
 /* An abstract name is sun_path minus its leading NUL. */
@@ -131,8 +139,8 @@ static long __nocfi sus_unix_connect(const struct pt_regs *regs)
 	susfs_syscall_fn_t orig = READ_ONCE(connect_orig);
 	long ret;
 
-	ret = sus_unix_check((int)regs->regs[0], (void __user *)regs->regs[1],
-			     (int)regs->regs[2]);
+	ret = sus_unix_check((int)susfs_sc_arg(regs, 0), (void __user *)susfs_sc_arg(regs, 1),
+			     (int)susfs_sc_arg(regs, 2));
 	if (ret)
 		return ret;
 	return orig ? orig(regs) : -ENOSYS;
@@ -143,8 +151,8 @@ static long __nocfi sus_unix_connect_compat(const struct pt_regs *regs)
 	susfs_syscall_fn_t orig = READ_ONCE(connect_orig_compat);
 	long ret;
 
-	ret = sus_unix_check((int)regs->regs[0], compat_ptr((u32)regs->regs[1]),
-			     (int)regs->regs[2]);
+	ret = sus_unix_check((int)susfs_sc_arg(regs, 0), compat_ptr((u32)susfs_sc_arg(regs, 1)),
+			     (int)susfs_sc_arg(regs, 2));
 	if (ret)
 		return ret;
 	return orig ? orig(regs) : -ENOSYS;
@@ -154,7 +162,7 @@ static struct susfs_fp_hook connect_hook = {
 	.nr = __NR_connect,
 	.nr_compat = SUS_UNIX_COMPAT_NR_CONNECT,
 	.name = "sus_unix/connect",
-	.sym = "__arm64_sys_connect",
+	.sym = SUSFS_SC_WRAPPER_NAME(connect),
 	.wrapper = sus_unix_connect,
 	.wrapper_compat = sus_unix_connect_compat,
 	.orig_slot = &connect_orig,
